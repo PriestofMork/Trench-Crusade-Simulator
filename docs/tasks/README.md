@@ -19,12 +19,15 @@ Open a new session in this folder and say:
 
 | Brief | Status |
 |---|---|
-| `001-project-skeleton.md` | Ready |
+| `001-project-skeleton.md` | Done |
+| `002-select-and-move.md` | Ready |
 
 ## Planned next (not yet written)
 
-- 002: select a model and move it with a distance budget and path preview
-- 003: terrain collision shapes and movement around them
-- 004: line of sight between cylinders (needs `docs/rules/line-of-sight.md` closed)
-- 005: dice service, roll resolution and the dice tray with marker prompts
-- 006: import the TTS models and show them on their bases
+- 003: turns and activations (who goes first, each action once, end activation)
+- 004: the roll pipeline and a first dice tray, then Dash as the first risky roll
+- 005: charge, the 1" melee zone and retreat (free attacks stubbed until attacks exist)
+- 006: height: multi-level terrain, climbing, jumping and falling
+- 007: line of sight between cylinders
+- 008: ranged and melee attacks, injury rolls, markers and their prompts
+- 009: import the TTS models and show them on their bases

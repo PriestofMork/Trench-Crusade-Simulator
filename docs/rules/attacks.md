@@ -10,10 +10,18 @@ Dice modifiers:
 | Source | Modifier |
 |---|---|
 | Ranged characteristic | as on profile |
-| Long range | -1 |
+| Long range: target is more than half the weapon's range away | -1 |
 | Target in cover | -1 |
 | Elevated position: attacker stands at least 3" higher than the ground the target stands on | +1 |
 | Keywords, abilities, skills | as stated |
+
+### Shooting into melee
+
+- When the chosen target is in melee, roll a d6 to see who is actually targeted:
+  1–3 a friendly model in that melee, 4–6 the enemy.
+- Then resolve a normal attack against that model, working out range, cover and
+  other modifiers for it.
+- A weapon with the Blast keyword hits every model in that melee.
 
 ## Melee attack
 
@@ -34,8 +42,11 @@ Dice modifiers:
 
 | Source | Modifier |
 |---|---|
+| The attack roll was a critical | +1 |
 | Melee attack against a Down target | +1 |
+| Fall of 3" or more (see `movement.md`) | +1 per full 3" |
 | Blood markers spent by the attacker's player | +1 each |
+| Blessing markers spent by the target's player | -1 each |
 | Weapon keywords, abilities, skills | as stated |
 | Target's Armour | see `models.md` |
 
@@ -58,7 +69,8 @@ Dice modifiers:
 ## Open questions
 
 1. Injury result bands: are 2–6 / 7–8 / 9+ correct?
-2. Long range: is it "more than half the weapon's range"?
-3. Melee: one attack per melee weapon? Off-hand penalty?
-4. Cover for ranged attacks is deferred (see `line-of-sight.md`).
-5. Shooting while in melee, and shooting into a melee.
+2. Melee: one attack per melee weapon? Off-hand penalty?
+3. Cover for ranged attacks is deferred (see `line-of-sight.md`).
+4. Shooting into melee with several friendly or several enemy models in it: how is
+   the one hit chosen?
+5. May a model that is itself in melee make ranged attacks?

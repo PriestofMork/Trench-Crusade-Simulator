@@ -1,22 +1,40 @@
 # Markers and states
 
+## General
+
+- A model can hold at most 6 markers of each kind.
+- Markers are spent before the dice are rolled, never after seeing the result.
+
 ## Blood markers
 
 - Placed on a model by injury rolls against it.
 - Spent by the opposing player:
-  - +1 die per marker on an injury roll against the marked model (confirmed).
-  - -1 die per marker on an action roll made by the marked model (assumed).
+  - +1 die per marker on an injury roll against the marked model.
+  - -1 die per marker on a success roll made by the marked model (assumed).
   - 6 markers (3 if the model is Down) for a Bloodbath (see `attacks.md`).
 
 ## Blessing markers
 
-- Spent by the model's own player. Exact uses are not confirmed yet.
+The reverse of blood markers. Spent by the model's own player:
+
+- +1 die per marker on a success roll made by the model.
+- -1 die per marker on an injury roll made against the model.
+
+## Infection markers
+
+- Work exactly like blood markers, but are placed only by specific effects.
+- A model's infection markers increase by 1 each time it activates.
+
+## Sin markers
+
+- Faction-specific. To be defined much later.
 
 ## Prompts in the digital game
 
 - When a roll is about to be made in the dice tray, the opponent is asked whether to
   spend blood markers on it, and the rolling player is asked whether to spend
-  blessing markers, if any are available.
+  blessing markers, if any are available. The dice are rolled only after both have
+  answered.
 
 ## Down
 
@@ -28,9 +46,8 @@
 
 ## Open questions
 
-1. Blessing markers: what exactly can they be spent on?
-2. Is there a maximum number of markers on a model?
-3. Can blood markers be spent after seeing the roll, or only before?
-4. Order of the two prompts when both players may spend on the same roll.
-5. Can a Down model act normally after standing (attack, shoot)? What can a model do
-   if it is prevented from standing?
+1. Order of the two prompts when both players may spend on the same roll, and
+   whether the second player sees the first player's choice.
+2. Does the infection increase apply only to models that already have at least one
+   infection marker? (Assumed yes.)
+3. What can a model do if it is prevented from standing up?

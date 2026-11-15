@@ -30,6 +30,18 @@ Two layers with a one-way dependency: `game/` knows `core/`, never the reverse.
 - Pending decisions: when resolution needs a player choice, core records what it is
   waiting for and who must answer. The UI shows a prompt and answers with a command.
 
+**Rolls are a general pipeline, not special cases**
+- A roll is a data object: its kind (success, injury, d6), base dice kept (2 or 3),
+  whether it is risky, who rolls, and its context (actor, target, weapon, action).
+- Modifiers are collected, not computed inline. Each is a small record: source label,
+  dice delta, or a flag change such as "make this roll risky". Profile, weapon
+  keywords, situation (long range, elevation), markers, abilities and skills all
+  contribute through the same interface.
+- New rules are added by registering a modifier provider or a reaction to a roll
+  result (for example "on a critical, add +1 die to the injury roll"). The roll
+  resolver itself never names a specific weapon, keyword or ability.
+- The collected list is what the dice tray shows as the roll breakdown.
+
 **`game/` (presentation)**
 - 3D table, camera, selection, movement preview, dice tray, prompts.
 - Reads core state, sends commands, plays back the events core emits.
@@ -44,6 +56,9 @@ Two layers with a one-way dependency: `game/` knows `core/`, never the reverse.
 | Line of sight | Any point of the attacker's cylinder to any point of the target's cylinder, against simplified terrain volumes. Cover is deferred. See `docs/rules/line-of-sight.md`. |
 | Terrain collision | Hand-blocked simple shapes (boxes, ramps), separate from the visual mesh. Used for both movement and line of sight. |
 | Movement | Free, not grid-based. Select a model, see reachable distance, click to move. |
+| Terrain data | Terrain is defined as plain data in core (simple shapes). The 3D scene, the navigation mesh and the rules checks are all built from that one definition. |
+| Paths | `game/` proposes a path (from Godot's navigation); `core/` validates it against the rules and rejects it if illegal. Core never trusts a path. |
+| Markers | Spent before the roll; cap of 6 per kind per model. |
 | Blood markers | When a roll is made, the opponent is prompted whether to spend blood markers on it. |
 | Blessing markers | The rolling player is prompted whether to spend blessing markers, if they have any. |
 | Modifiers | Weapon and situational modifiers are applied automatically and shown in the roll breakdown. |
@@ -56,4 +71,4 @@ Two layers with a one-way dependency: `game/` knows `core/`, never the reverse.
 - Cover mechanics (deferred).
 - Table size and whether it varies per scenario.
 - Order of the blood and blessing prompts when both players can spend on one roll.
-- Vertical movement: climbing, jumping and falling.
+- Going down: climbing down and jumping down from a height.

@@ -1,9 +1,17 @@
 # Rolls
 
+The roll system is a general base that every other rule plugs into. Nothing about a
+specific weapon, ability or keyword is hard-coded in it (see `docs/design.md`).
+
 ## Success roll
 
 - Roll 2d6. A total of 7 or more is a success; less is a failure.
-- A total of 12 or more is a critical. (Assumed; effect not yet defined.)
+
+## Criticals
+
+- A total of 12 or more is a critical, but only on ranged and melee attack success
+  rolls, and wherever an ability explicitly refers to criticals.
+- A critical ranged or melee attack gives +1 die on the resulting injury roll.
 
 ## Plus and minus dice
 
@@ -17,10 +25,13 @@
 ## Risky rolls
 
 - If a risky success roll fails, the model's activation ends immediately.
-- Dash and jumping are risky. After a first failed morale test, all of that warband's
-  success rolls are risky (see `morale.md`).
+- Dash, climbing and jumping are risky. After a first failed morale test, all of
+  that warband's success rolls are risky (see `morale.md`).
 
-## Open questions
+## Marker spending
 
-1. What does a critical (12+) do on attack rolls and on other rolls?
-2. Is climbing risky?
+- Blood and blessing markers are spent before the dice are rolled (see `markers.md`).
+
+## Roll-off
+
+- Both players roll a d6; the higher roll wins. Ties are rolled again.

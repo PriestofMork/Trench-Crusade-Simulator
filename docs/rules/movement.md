@@ -9,9 +9,17 @@
 ## Climb
 
 - The model's base must touch a sheer surface.
-- Make a success roll. On a success the model is placed at the top of the surface
-  with the centre of its base on the upper edge.
+- Make a risky success roll.
+  - Success: the model is placed at the top of the surface with the centre of its
+    base on the upper edge.
+  - Failure: the model stays where it attempted the climb, and its activation ends.
 - Cost: the vertical distance climbed, in inches of movement.
+
+## Falling
+
+- A fall of less than 3" has no effect.
+- A fall of 3" or more causes an injury roll against the model at +1 die for every
+  full 3" fallen (3" is +1, 6" and 7" are +2, 9" is +3).
 
 ## Jump over a gap
 
@@ -36,6 +44,8 @@
 - The path must be as straight as possible, but may bend to avoid things such as
   dangerous terrain.
 - The charge ends when the charger's base touches the target's base.
+- If the distance is not enough to reach the target, the charger stops where its
+  movement runs out, along the charge path.
 - **Interposing:** if the path would bring the charger within 1" of a different enemy
   model, the charger must charge that model instead.
 - **Multi-charge:** after touching the target's base, the charger may spend remaining
@@ -47,14 +57,13 @@
 
 - A model is in melee while within 1" of an enemy model.
 - Retreat is a move action that lets the model leave the 1" zone. Before it leaves,
-  the enemy makes a melee attack action against it.
+  every enemy model within 1" makes a free melee attack action against it.
 
 ## Open questions
 
-1. Failed climb: does the model stay where it is? Does its activation end?
-2. Falling: not written yet (damage, where the model lands, Down or not).
-3. Climbing down and jumping down from a height.
-4. Charge: what happens if the rolled distance does not reach the target?
-5. Retreat: if several enemies are within 1", does each get an attack?
-6. Does a model in melee have any way to move other than Retreat?
-7. Difficult and dangerous terrain.
+1. Falling: where does the model land (assumed: directly below the point it fell
+   from), and does anything happen beyond the injury roll?
+2. Going down: climbing down a sheer surface and jumping down from a height.
+3. May a model move through other models' bases (friendly or enemy)? (Assumed: no.)
+4. Does a model in melee have any way to move other than Retreat? (Assumed: no.)
+5. Difficult and dangerous terrain.

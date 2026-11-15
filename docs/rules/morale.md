@@ -1,7 +1,7 @@
 # Morale
 
-- A warband must test morale when only half of it is still standing, counting both
-  Out of Action and Down models as not standing.
+- At the end of every turn, a warband tests morale if only half of it is still
+  standing, counting both Out of Action and Down models as not standing.
 - The test is a 2d6 success roll, at +1 die if the warband has a model with the
   Leader keyword that is not Down.
 - Success: nothing happens.
@@ -10,5 +10,4 @@
 
 ## Open questions
 
-1. When is the test made: at the start of every turn while the condition holds?
-2. Is the threshold "half or fewer standing"?
+1. Is the threshold "half or fewer standing"? (Assumed yes.)

@@ -5,7 +5,8 @@
 - A game is a series of turns. In a turn, players alternate activating one model at
   a time until every model has activated.
 - At the start of a turn, the player with fewer models on the battlefield that are
-  not Down chooses which player activates first.
+  not Down chooses which player activates first. On a tie, the players roll off
+  (see `rolls.md`) and the winner chooses.
 
 ## Activation
 
@@ -30,8 +31,7 @@
 
 ## Open questions
 
-1. Tie on non-Down model count: who chooses?
-2. When one player has no unactivated models left, does the other activate all of
+1. When one player has no unactivated models left, does the other activate all of
    theirs in a row? (Assumed yes.)
-3. Is the first-activation choice made every turn, including turn 1? (Assumed every
+2. Is the first-activation choice made every turn, including turn 1? (Assumed every
    turn; scenarios may override turn 1.)
