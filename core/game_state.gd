@@ -10,9 +10,11 @@ const DEFAULT_TABLE_SIZE_INCHES: float = 48.0
 var table_width: float
 var table_depth: float
 var models: Array[ModelState] = []
+var terrain: Array[TerrainPiece] = []
 var dice: Dice
 
 var _next_model_id: int = 1
+var _next_terrain_id: int = 1
 
 
 func _init(
@@ -43,8 +45,22 @@ func get_model(id: int) -> ModelState:
 
 
 ## Only for commands: adds a model and returns it.
-func add_model(player: int, position: Vector3, base_mm: int) -> ModelState:
-	var model: ModelState = ModelState.new(_next_model_id, player, position, base_mm)
+func add_model(
+	player: int, position: Vector3, base_mm: int, movement: float = 6.0
+) -> ModelState:
+	var model: ModelState = ModelState.new(_next_model_id, player, position, base_mm, movement)
 	_next_model_id += 1
 	models.append(model)
 	return model
+
+
+## Only for commands: adds a terrain piece and returns it.
+func add_terrain(
+	center: Vector3, size: Vector3, rotation: float, blocks_movement: bool
+) -> TerrainPiece:
+	var piece: TerrainPiece = TerrainPiece.new(
+		_next_terrain_id, center, size, rotation, blocks_movement
+	)
+	_next_terrain_id += 1
+	terrain.append(piece)
+	return piece

@@ -8,14 +8,19 @@ const EPSILON: float = 0.0001
 var player: int
 var position: Vector3
 var base_mm: int
+## Movement characteristic, inches.
+var movement: float
 ## Id of the placed model, set by apply().
 var placed_model_id: int = -1
 
 
-func _init(p_player: int, p_position: Vector3, p_base_mm: int) -> void:
+func _init(
+	p_player: int, p_position: Vector3, p_base_mm: int, p_movement: float = 6.0
+) -> void:
 	player = p_player
 	position = p_position
 	base_mm = p_base_mm
+	movement = p_movement
 
 
 func validate(state: GameState) -> String:
@@ -23,6 +28,8 @@ func validate(state: GameState) -> String:
 		return "Player must be 0 or 1, got %d." % player
 	if not BaseSizes.is_known(base_mm):
 		return "Unknown base size: %d mm." % base_mm
+	if movement < 0.0:
+		return "Movement must not be negative, got %s." % movement
 
 	var radius: float = BaseSizes.mm_to_inches(base_mm) / 2.0
 	if (
@@ -42,7 +49,7 @@ func validate(state: GameState) -> String:
 
 
 func apply(state: GameState) -> void:
-	placed_model_id = state.add_model(player, position, base_mm).id
+	placed_model_id = state.add_model(player, position, base_mm, movement).id
 
 
 static func _cylinders_overlap(

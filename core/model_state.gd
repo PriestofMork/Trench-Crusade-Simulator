@@ -10,13 +10,21 @@ var player: int
 var position: Vector3
 ## Base diameter in millimetres, as stored in data.
 var base_mm: int
+## Movement characteristic, inches.
+var movement: float
+## Movement left in the current activation, inches.
+var movement_left: float
 
 
-func _init(p_id: int, p_player: int, p_position: Vector3, p_base_mm: int) -> void:
+func _init(
+	p_id: int, p_player: int, p_position: Vector3, p_base_mm: int, p_movement: float = 6.0
+) -> void:
 	id = p_id
 	player = p_player
 	position = p_position
 	base_mm = p_base_mm
+	movement = p_movement
+	movement_left = p_movement
 
 
 func base_diameter_inches() -> float:
