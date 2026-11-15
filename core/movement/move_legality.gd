@@ -105,7 +105,7 @@ func passing_result(p: Vector2, surface: int) -> Result:
 		return Result.OK
 	if not field.base_on_table(p, radius):
 		return Result.OFF_TABLE
-	if PlanarGeometry.point_polygon_signed_distance(p, field.surfaces[surface].polygon) > HeightField.EDGE_SLACK:
+	if field.surfaces[surface].shape.signed_distance(p) > HeightField.EDGE_SLACK:
 		return Result.NO_FLOOR
 	if not field.passable(p, surface, radius):
 		return Result.TERRAIN
@@ -143,11 +143,8 @@ func walk_result(a: Vector2, b: Vector2, surface: int) -> Result:
 		return Result.OK
 	if not field.base_on_table(a, radius) or not field.base_on_table(b, radius):
 		return Result.OFF_TABLE
-	var polygon: PackedVector2Array = field.surfaces[surface].polygon
-	if (
-		PlanarGeometry.point_polygon_signed_distance(a, polygon) > HeightField.EDGE_SLACK
-		or PlanarGeometry.point_polygon_signed_distance(b, polygon) > HeightField.EDGE_SLACK
-	):
+	var shape: ConvexShape = field.surfaces[surface].shape
+	if shape.signed_distance(a) > HeightField.EDGE_SLACK or shape.signed_distance(b) > HeightField.EDGE_SLACK:
 		return Result.NO_FLOOR
 	if not field.walk_clear(a, b, surface, radius):
 		return Result.TERRAIN
@@ -181,13 +178,13 @@ func wall_cost(u: Vector2, su: int, v: Vector2, sv: int) -> float:
 	var piece: TerrainPiece = field.surfaces[high_surface].piece
 	if piece == null:
 		return INF
-	var polygon: PackedVector2Array = field.surfaces[high_surface].polygon
+	var shape: ConvexShape = field.surfaces[high_surface].shape
 	# The low end touches the wall, the high end is on its top edge, a base radius away.
 	var horizontal: float = low.distance_to(high)
 	if (
 		absf(horizontal - radius) > TOUCH_SLACK
-		or PlanarGeometry.point_polygon_signed_distance(low, polygon) < radius - TOUCH_SLACK
-		or PlanarGeometry.point_polygon_signed_distance(high, polygon) > HeightField.EDGE_SLACK
+		or shape.signed_distance(low) < radius - TOUCH_SLACK
+		or shape.signed_distance(high) > HeightField.EDGE_SLACK
 	):
 		return INF
 	# The wall reaches down to the low floor.

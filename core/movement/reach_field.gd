@@ -233,7 +233,7 @@ func closest_destination(point: Vector3, max_distance: float) -> Variant:
 	for s: HeightField.Surface in field.surfaces:
 		if candidates.has(s.index):
 			continue
-		if s.is_table() or PlanarGeometry.point_polygon_signed_distance(target, s.polygon) <= max_distance:
+		if s.is_table() or s.shape.signed_distance(target) <= max_distance:
 			candidates.append(s.index)
 	var order: Array[Vector2] = []
 	for s: int in candidates:
@@ -336,6 +336,10 @@ func _layer_for(surface: int) -> Layer:
 			var node: int = node_index(layer.ix0 + i, layer.iz0 + j)
 			var p: Vector2 = node_position_2d(node)
 			var k: int = j * layer.size_x + i
+			layer.clip[k] = field.visible_value(p, surface)
+			if p.distance_to(_start_2d) > _limit:
+				layer.values[k] = cell_size
+				continue
 			var blocked: float = -legality.stand_value(p, surface, CLEARANCE_CAP)
 			var value: float = cell_size
 			if blocked > EPSILON:
@@ -345,7 +349,6 @@ func _layer_for(surface: int) -> Layer:
 				if state != NONE and _cost[state] < INF:
 					value = maxf(_cost[state] + _surface_surcharge[surface] - movement_left, blocked)
 			layer.values[k] = value
-			layer.clip[k] = field.visible_value(p, surface)
 	return layer
 
 
@@ -374,6 +377,9 @@ func _build_states() -> void:
 		var p: Vector2 = node_position_2d(node)
 		if node == _start_node:
 			p = _start_2d
+		# Every way there costs at least the distance on the table plane.
+		if p.distance_to(_start_2d) > _limit:
+			continue
 		for surface: int in field.surfaces_at(p):
 			if legality.passing_result(p, surface) != MoveLegality.Result.OK:
 				continue
@@ -560,6 +566,13 @@ func _expand_switches(state: int) -> void:
 			if other == surface or _done[next] == 1:
 				continue
 			var there: Vector2 = _state_pos_2d[next]
+			# The two surfaces must come within the tolerance of each other between
+			# the two points: they are planes, so the ends decide it.
+			var gap_here: float = _state_pos[state].y - field.surface_height(other, here)
+			var gap_there: float = field.surface_height(surface, there) - _state_pos[next].y
+			var slack: float = HeightField.TOLERANCE * 0.5
+			if (gap_here > slack and gap_there > slack) or (gap_here < -slack and gap_there < -slack):
+				continue
 			var meet: Variant = _meeting_point(here, there, surface, other)
 			if meet == null:
 				continue
@@ -612,7 +625,7 @@ func _expand_walls(state: int) -> void:
 		if high == surface:
 			continue
 		var polygon: PackedVector2Array = field.surfaces[high].polygon
-		var d: float = PlanarGeometry.point_polygon_signed_distance(here, polygon)
+		var d: float = field.surfaces[high].shape.signed_distance(here)
 		if d < _radius - MoveLegality.TOUCH_SLACK or d > _radius + reach:
 			continue
 		var top: Vector2 = PlanarGeometry.closest_point_on_polygon(here, polygon)
@@ -624,7 +637,7 @@ func _expand_walls(state: int) -> void:
 	if surface == HeightField.TABLE:
 		return
 	var own: PackedVector2Array = field.surfaces[surface].polygon
-	if -PlanarGeometry.point_polygon_signed_distance(here, own) > reach:
+	if -field.surfaces[surface].shape.signed_distance(here) > reach:
 		return
 	var n: int = own.size()
 	var orientation: float = signf(PlanarGeometry.polygon_double_area(own))
@@ -662,6 +675,12 @@ static func _outward_normal(polygon: PackedVector2Array, i: int, orientation: fl
 ## `to_surface`, and joins the arrival point to the nodes around it.
 func _try_wall(state: int, from: Vector2, from_surface: int, to: Vector2, to_surface: int) -> void:
 	var here: Vector2 = _state_pos_2d[state]
+	# States expand cheapest first, so a crossing already made close by is
+	# usually at least as good: skip this one if an arrival point near `to`
+	# plus the way from it is no dearer than the least this one could cost.
+	var least: float = _cost[state] + here.distance_to(from) + from.distance_to(to)
+	if _arrival_near_is_as_cheap(to, to_surface, least):
+		return
 	if not field.is_floor(from, from_surface) or not field.is_floor(to, to_surface):
 		return
 	var walk: float = 0.0
@@ -716,6 +735,30 @@ func _try_wall(state: int, from: Vector2, from_surface: int, to: Vector2, to_sur
 			legality.clearance(to, to_surface, CLEARANCE_CAP)
 		)
 		_register_anchor(anchor, to)
+
+
+## Whether an arrival anchor on `surface` within a cell of p costs no more than
+## `cost` once the way from it to p is added.
+func _arrival_near_is_as_cheap(p: Vector2, surface: int, cost: float) -> bool:
+	var local: Vector2 = (p - origin) / cell_size
+	var cx: int = roundi(local.x)
+	var cz: int = roundi(local.y)
+	for dz: int in range(-1, 2):
+		for dx: int in range(-1, 2):
+			var nx: int = cx + dx
+			var nz: int = cz + dz
+			if nx < 0 or nz < 0 or nx >= size_x or nz >= size_z:
+				continue
+			var node: int = nz * size_x + nx
+			if not _anchors_near_node.has(node):
+				continue
+			for anchor: int in _anchors_near_node[node]:
+				if _anchor_surface[anchor] != surface:
+					continue
+				var at: Vector3 = _anchor_pos[anchor]
+				if _anchor_cost[anchor] + Vector2(at.x, at.z).distance_to(p) <= cost:
+					return true
+	return false
 
 
 ## Offers a parent whose line has been checked.
