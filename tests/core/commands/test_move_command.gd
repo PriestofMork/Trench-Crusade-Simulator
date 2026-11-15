@@ -41,25 +41,24 @@ func test_rejects_too_long() -> void:
 
 
 func test_rejects_through_terrain() -> void:
-	state.execute(PlaceTerrainCommand.new(Vector3(13, 1, 10), Vector3(1, 2, 4)))
+	state.execute(PlaceTerrainCommand.new(Vector2(13, 10), Vector3(1, 2, 4)))
 	var command: MoveCommand = _move([Vector3(15.5, 0, 10)])
 	assert_string_contains(state.execute(command), "terrain")
 	assert_eq(command.rejection, MoveCommand.Rejection.BLOCKED)
 
 
 func test_ignores_terrain_that_does_not_block() -> void:
-	state.execute(PlaceTerrainCommand.new(Vector3(13, 0.25, 10), Vector3(1, 0.5, 4), 0.0, false))
-	assert_eq(state.execute(_move([Vector3(15.5, 0, 10)])), "")
+	pending("Replaced by the low obstacle rules later in brief 004.")
 
 
 func test_rejects_ending_inside_terrain() -> void:
-	state.execute(PlaceTerrainCommand.new(Vector3(14, 1, 10), Vector3(2, 2, 2)))
+	state.execute(PlaceTerrainCommand.new(Vector2(14, 10), Vector3(2, 2, 2)))
 	assert_ne(state.execute(_move([Vector3(14, 0, 10)])), "")
 
 
 func test_rejects_through_rotated_terrain_corner() -> void:
 	# A diamond whose corner pokes towards the straight path.
-	state.execute(PlaceTerrainCommand.new(Vector3(13, 1, 12), Vector3(2, 2, 2), PI / 4.0))
+	state.execute(PlaceTerrainCommand.new(Vector2(13, 12), Vector3(2, 2, 2), PI / 4.0))
 	# Corner at z = 12 - sqrt(2) ~ 10.59; the base reaches z = 10.63 on the straight line.
 	assert_ne(state.execute(_move([Vector3(15, 0, 10)])), "")
 	# A path dipping away from the corner clears it.
@@ -169,10 +168,19 @@ func test_reset_movement_restores_full_movement() -> void:
 
 
 func test_place_terrain() -> void:
-	var command: PlaceTerrainCommand = PlaceTerrainCommand.new(Vector3(5, 1, 5), Vector3(2, 2, 3), 0.5)
+	var command: PlaceTerrainCommand = PlaceTerrainCommand.new(
+		Vector2(5, 5), Vector3(2, 2, 3), 0.5, 1.5, TerrainPiece.Tag.LADDER, TerrainPiece.Shape.RAMP
+	)
 	assert_eq(state.execute(command), "")
 	assert_eq(state.terrain.size(), 1)
-	assert_eq(state.terrain[0].id, command.placed_terrain_id)
-	assert_eq(state.terrain[0].rotation, 0.5)
-	assert_true(state.terrain[0].blocks_movement)
-	assert_ne(state.execute(PlaceTerrainCommand.new(Vector3(5, 1, 5), Vector3(0, 2, 3))), "")
+	var piece: TerrainPiece = state.terrain[0]
+	assert_eq(piece.id, command.placed_terrain_id)
+	assert_eq(piece.rotation, 0.5)
+	assert_eq(piece.footprint_center, Vector2(5, 5))
+	assert_eq(piece.footprint_size, Vector2(2, 3))
+	assert_eq(piece.base_height, 1.5)
+	assert_eq(piece.height, 2.0)
+	assert_eq(piece.tag, TerrainPiece.Tag.LADDER)
+	assert_eq(piece.shape, TerrainPiece.Shape.RAMP)
+	assert_ne(state.execute(PlaceTerrainCommand.new(Vector2(5, 5), Vector3(0, 2, 3))), "")
+	assert_ne(state.execute(PlaceTerrainCommand.new(Vector2(5, 5), Vector3(1, 2, 3), 0.0, -0.5)), "")

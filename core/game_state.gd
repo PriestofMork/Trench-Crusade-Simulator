@@ -56,10 +56,16 @@ func add_model(
 
 ## Only for commands: adds a terrain piece and returns it.
 func add_terrain(
-	center: Vector3, size: Vector3, rotation: float, blocks_movement: bool
+	footprint_center: Vector2,
+	footprint_size: Vector2,
+	rotation: float,
+	base_height: float,
+	height: float,
+	tag: TerrainPiece.Tag,
+	shape: TerrainPiece.Shape
 ) -> TerrainPiece:
 	var piece: TerrainPiece = TerrainPiece.new(
-		_next_terrain_id, center, size, rotation, blocks_movement
+		_next_terrain_id, footprint_center, footprint_size, rotation, base_height, height, tag, shape
 	)
 	_next_terrain_id += 1
 	terrain.append(piece)

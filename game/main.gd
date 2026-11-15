@@ -294,9 +294,7 @@ func _place_starting_terrain() -> void:
 		var center: Vector2 = entry["center"]
 		var size: Vector3 = entry["size"]
 		var turn: float = entry["turn"]
-		var command: PlaceTerrainCommand = PlaceTerrainCommand.new(
-			Vector3(center.x, size.y / 2.0, center.y), size, deg_to_rad(turn)
-		)
+		var command: PlaceTerrainCommand = PlaceTerrainCommand.new(center, size, deg_to_rad(turn))
 		var error: String = state.execute(command)
 		if error != "":
 			push_error("Starting terrain rejected: %s" % error)

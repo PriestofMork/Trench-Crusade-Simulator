@@ -9,10 +9,10 @@ const OPEN_COLOUR: Color = Color(0.42, 0.45, 0.36)
 func setup(piece: TerrainPiece) -> void:
 	name = "Terrain%d" % piece.id
 	var box: BoxMesh = BoxMesh.new()
-	box.size = piece.size
+	box.size = piece.bounds_size()
 	mesh = box
 	var material: StandardMaterial3D = StandardMaterial3D.new()
-	material.albedo_color = BLOCKING_COLOUR if piece.blocks_movement else OPEN_COLOUR
+	material.albedo_color = BLOCKING_COLOUR
 	material_override = material
-	position = piece.center
+	position = piece.bounds_center()
 	rotation = Vector3(0.0, piece.rotation, 0.0)

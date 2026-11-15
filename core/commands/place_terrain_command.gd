@@ -1,29 +1,43 @@
 class_name PlaceTerrainCommand
 extends Command
-## Adds a terrain piece to the table.
+## Adds a terrain piece to the table. See TerrainPiece for what the fields mean.
 
-var center: Vector3
+var footprint_center: Vector2
+## Footprint size along the piece's own x and z axes in x and z, height in y.
 var size: Vector3
 var rotation: float
-var blocks_movement: bool
+var base_height: float
+var tag: TerrainPiece.Tag
+var shape: TerrainPiece.Shape
 ## Id of the placed piece, set by apply().
 var placed_terrain_id: int = -1
 
 
 func _init(
-	p_center: Vector3, p_size: Vector3, p_rotation: float = 0.0, p_blocks_movement: bool = true
+	p_footprint_center: Vector2,
+	p_size: Vector3,
+	p_rotation: float = 0.0,
+	p_base_height: float = 0.0,
+	p_tag: TerrainPiece.Tag = TerrainPiece.Tag.NONE,
+	p_shape: TerrainPiece.Shape = TerrainPiece.Shape.BOX
 ) -> void:
-	center = p_center
+	footprint_center = p_footprint_center
 	size = p_size
 	rotation = p_rotation
-	blocks_movement = p_blocks_movement
+	base_height = p_base_height
+	tag = p_tag
+	shape = p_shape
 
 
 func validate(_state: GameState) -> String:
 	if size.x <= 0.0 or size.y <= 0.0 or size.z <= 0.0:
 		return "Terrain size must be positive, got %s." % str(size)
+	if base_height < 0.0:
+		return "Terrain may not reach below the table, got base height %s." % base_height
 	return ""
 
 
 func apply(state: GameState) -> void:
-	placed_terrain_id = state.add_terrain(center, size, rotation, blocks_movement).id
+	placed_terrain_id = state.add_terrain(
+		footprint_center, Vector2(size.x, size.z), rotation, base_height, size.y, tag, shape
+	).id

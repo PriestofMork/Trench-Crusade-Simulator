@@ -60,9 +60,7 @@ func _init(state: GameState, model: ModelState) -> void:
 			_friend_centres.append(centre)
 			_friend_min_distances.append(min_distance)
 	for piece: TerrainPiece in state.terrain:
-		if not piece.blocks_movement:
-			continue
-		_rect_centres.append(piece.footprint_center())
+		_rect_centres.append(piece.footprint_center)
 		_rect_half_extents.append(piece.footprint_half_extents())
 		_rect_rotations.append(piece.rotation)
 		_rect_reach.append(piece.footprint_half_extents().length() + radius)

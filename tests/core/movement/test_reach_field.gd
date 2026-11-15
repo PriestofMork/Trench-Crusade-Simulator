@@ -14,9 +14,7 @@ func _place(player: int, pos: Vector3, base_mm: int, movement: float = 6.0) -> i
 
 
 func _terrain(center: Vector2, size: Vector3, rotation: float = 0.0) -> void:
-	var command: PlaceTerrainCommand = PlaceTerrainCommand.new(
-		Vector3(center.x, size.y / 2.0, center.y), size, rotation
-	)
+	var command: PlaceTerrainCommand = PlaceTerrainCommand.new(center, size, rotation)
 	assert_eq(state.execute(command), "")
 
 
