@@ -170,3 +170,70 @@ func test_stand_value_is_the_distance_to_a_straight_ledge() -> void:
 	# Off the table edge and against a wall it is the clearance.
 	assert_almost_eq(field.stand_value(Vector2(1, 30), HeightField.TABLE, R32, H32), 1 - R32, 0.0001)
 	assert_almost_eq(field.stand_value(Vector2(13, 10), HeightField.TABLE, R32, H32), 1 - R32, 0.0001)
+
+
+# Seams: the floor is the whole level surface, not one piece (terrain.md).
+
+
+func test_stoppable_exactly_on_a_seam_between_two_same_height_boxes() -> void:
+	var west: int = _piece(Vector2(10, 10), Vector3(4, 2, 4))
+	var east: int = _piece(Vector2(14, 10), Vector3(4, 2, 4))
+	var field: HeightField = HeightField.new(state)
+	var a: int = _surface_of(field, west)
+	var b: int = _surface_of(field, east)
+	assert_true(field.joined_surfaces(a).has(b))
+	assert_true(field.same_level(a, b))
+	var seam: Vector2 = Vector2(12, 10)
+	for s: int in [a, b]:
+		assert_true(field.passable(seam, s, R32), "centre on the seam is over the floor")
+		assert_almost_eq(field.support_fraction(seam, s, R32), 1.0, 1e-6, "both pieces count")
+		assert_true(field.stoppable(seam, s, R32, H32))
+	# Just off the seam onto either piece, still fully supported.
+	assert_almost_eq(field.support_fraction(Vector2(11.8, 10), a, R32), 1.0, 1e-6)
+	assert_almost_eq(field.stand_value(seam, a, R32, H32), field.stand_value(Vector2(11.9, 10), a, R32, H32), 0.11)
+
+
+func test_near_the_outer_corner_of_a_seam_only_both_together_count() -> void:
+	# Two boxes meeting at x = 12; their common outer edge is z = 12.
+	var west: int = _piece(Vector2(10, 10), Vector3(4, 2, 4))
+	_piece(Vector2(14, 10), Vector3(4, 2, 4))
+	var field: HeightField = HeightField.new(state)
+	var a: int = _surface_of(field, west)
+	# On the seam at the outer edge: half the base over the two together.
+	assert_almost_eq(field.support_fraction(Vector2(12, 12), a, R32), 0.5, 1e-6)
+	assert_true(field.stoppable(Vector2(12, 12), a, R32, H32))
+	assert_true(field.stoppable(Vector2(12, 11.9), a, R32, H32))
+	assert_false(field.stoppable(Vector2(12, 12.0005), a, R32, H32), "under half, even together")
+	# A lone box's corner is only a quarter.
+	state = GameState.new(1)
+	var alone: int = _piece(Vector2(10, 10), Vector3(4, 2, 4))
+	field = HeightField.new(state)
+	assert_almost_eq(field.support_fraction(Vector2(12, 12), _surface_of(field, alone), R32), 0.25, 1e-6)
+
+
+func test_ramp_top_meeting_a_platform_supports_together() -> void:
+	# A ramp only 0.5" wide, too narrow to hold half a 32 mm base on its own,
+	# rising from x = 4 to its top at x = 10 where a 2" platform starts.
+	var ramp: int = _piece(Vector2(7, 10), Vector3(6, 2, 0.5), 0.0, 0.0, TerrainPiece.Tag.NONE, TerrainPiece.Shape.RAMP)
+	var platform: int = _piece(Vector2(13, 10), Vector3(6, 2, 6))
+	var field: HeightField = HeightField.new(state)
+	var slope: int = _surface_of(field, ramp)
+	var top: int = _surface_of(field, platform)
+	assert_true(field.joined_surfaces(slope).has(top))
+	assert_false(field.same_level(slope, top), "different planes: joined, not one level")
+	assert_false(field.stoppable(Vector2(7, 10), slope, R32, H32), "mid-ramp the strip is too narrow")
+	assert_true(field.stoppable(Vector2(9.8, 10), slope, R32, H32), "at the top the platform helps")
+	# The ramp's foot joins the table too.
+	assert_true(field.joined_surfaces(slope).has(HeightField.TABLE))
+
+
+func test_pieces_of_different_heights_do_not_support_each_other() -> void:
+	var low: int = _piece(Vector2(10, 10), Vector3(4, 0.5, 4))
+	var high: int = _piece(Vector2(14, 10), Vector3(4, 1, 4))
+	var field: HeightField = HeightField.new(state)
+	var a: int = _surface_of(field, low)
+	var b: int = _surface_of(field, high)
+	assert_false(field.joined_surfaces(a).has(b))
+	assert_almost_eq(field.support_fraction(Vector2(12, 10), b, R32), 0.5, 1e-6, "only its own half")
+	assert_false(field.stoppable(Vector2(11.999, 10), b, R32, H32), "lower ground never counts")
+	assert_almost_eq(field.stop_surcharge(a, PackedInt32Array([high])), 0.5, 0.0001)

@@ -55,6 +55,9 @@ func _run() -> void:
 
 	# 3. Sandbag crosser: straight over, nothing extra.
 	await _select(4)
+	_main.set_hover_override(Vector3(6, 0.5, 38))
+	_look(Vector3(7, 0, 38.5), 0.0, deg_to_rad(75), 11.0)
+	await _shot("03a_sandbag_row_one_area")
 	_look(Vector3(7, 0, 38.5), 0.9, deg_to_rad(40), 14.0)
 	_main.set_hover_override(Vector3(7, 0, 35.5))
 	await _shot("03_sandbags_hover")

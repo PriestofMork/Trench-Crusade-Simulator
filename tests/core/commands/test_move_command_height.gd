@@ -209,3 +209,31 @@ func test_ends_must_be_stoppable() -> void:
 	assert_string_contains(command.validate(state), "half the base")
 	var across: Array[Vector3] = [Vector3(7, 2, 10), Vector3(13, 2, 10), Vector3(14, 2, 10)]
 	assert_eq(state.execute(MoveCommand.new(id, across)), "", "crossing it is fine")
+
+
+func _sandbag_row() -> PackedInt32Array:
+	# Three 0.5" sandbags in a row, x 4..10, z 37.625..38.375, touching end to end.
+	var ids: PackedInt32Array = PackedInt32Array()
+	for x: float in [5.0, 7.0, 9.0]:
+		ids.append(_piece(Vector2(x, 38), Vector3(2, 0.5, 0.75)))
+	return ids
+
+
+func test_along_a_sandbag_row_is_one_walk_and_one_obstacle() -> void:
+	_sandbag_row()
+	var id: int = _place(Vector3(4.6, 0.5, 38), 25)
+	# Straight along the row across both seams: one segment, no surcharge (started on the row).
+	assert_almost_eq(_cost(id, [Vector3(9.4, 0.5, 38)]), 4.8, 0.0001)
+	# Stopping on a seam is fine.
+	assert_almost_eq(_cost(id, [Vector3(6, 0.5, 38)]), 1.4, 0.0001)
+	assert_eq(state.execute(MoveCommand.new(id, [Vector3(6, 0.5, 38)])), "")
+	assert_almost_eq(_cost(id, [Vector3(8, 0.5, 38)]), 2.0, 0.0001, "still the same obstacle")
+
+
+func test_stepping_onto_a_sandbag_row_pays_once() -> void:
+	_sandbag_row()
+	var id: int = _place(Vector3(7, 0, 40), 25)
+	var onto: Array[Vector3] = [Vector3(7, 0, 38.375 + R25), Vector3(7, 0.5, 38.375), Vector3(7, 0.5, 38)]
+	assert_almost_eq(_cost(id, onto), 2.0 + 0.5, 0.0001)
+	assert_eq(state.execute(MoveCommand.new(id, onto)), "")
+	assert_almost_eq(_cost(id, [Vector3(9, 0.5, 38)]), 2.0, 0.0001, "moving on along the row is free")

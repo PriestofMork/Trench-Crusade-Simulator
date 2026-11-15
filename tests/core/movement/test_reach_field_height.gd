@@ -295,3 +295,18 @@ func test_test_table_build_time() -> void:
 			(Time.get_ticks_usec() - started) / 1000.0
 		])
 	pass_test("timing only")
+
+
+func test_sandbag_row_is_one_area_and_one_straight_walk() -> void:
+	var id: int = _model_at(Vector3(4.6, 0.5, 38), 25, 6.0)
+	var field: ReachField = ReachField.new(state, id)
+	for x: float in [6.0, 8.0, 7.0, 9.4]:
+		assert_true(field.is_reachable(Vector3(x, 0.5, 38)), "on the row at x = %.1f" % x)
+	var along: MoveCommand = _assert_valid(field, id, Vector3(9.4, 0.5, 38), "along the row")
+	assert_eq(along.waypoints.size(), 1, "one straight segment across the seams: %s" % str(along.waypoints))
+	assert_almost_eq(along.cost, 4.8, 0.0001)
+	var row_layers: int = 0
+	for layer: ReachField.Layer in field.contour_layers():
+		if field.field.surface_height(layer.surface, Vector2(7, 38)) > 0.25:
+			row_layers += 1
+	assert_eq(row_layers, 1, "one layer for the whole row")

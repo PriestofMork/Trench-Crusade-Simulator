@@ -308,21 +308,28 @@ func surface_height(surface: int, p: Vector2) -> float:
 ## model may end its move in (see Layer).
 func contour_layers() -> Array[Layer]:
 	var layers: Array[Layer] = []
-	var has_destination: Dictionary[int, bool] = {}
+	var groups: Dictionary[int, bool] = {}
 	for k: int in state_count():
 		if is_state_reachable(k):
-			has_destination[_state_surface[k]] = true
-	for surface: int in has_destination:
-		layers.append(_layer_for(surface))
+			groups[field.level_members(_state_surface[k])[0]] = true
+	for first: int in groups:
+		layers.append(_layer_for(first))
 	return layers
 
 
+## One layer for a whole level surface (all its pieces, so no outline at the
+## seams between them). `surface` is the group's first member; they share a plane.
 func _layer_for(surface: int) -> Layer:
-	var s: HeightField.Surface = field.surfaces[surface]
+	var members: PackedInt32Array = field.level_members(surface)
 	var layer: Layer = Layer.new()
 	layer.surface = surface
-	var low: Vector2 = (s.bounds_min - origin) / cell_size
-	var high: Vector2 = (s.bounds_max - origin) / cell_size
+	var bounds_min: Vector2 = Vector2(INF, INF)
+	var bounds_max: Vector2 = Vector2(-INF, -INF)
+	for member: int in members:
+		bounds_min = bounds_min.min(field.surfaces[member].bounds_min)
+		bounds_max = bounds_max.max(field.surfaces[member].bounds_max)
+	var low: Vector2 = (bounds_min - origin) / cell_size
+	var high: Vector2 = (bounds_max - origin) / cell_size
 	layer.ix0 = clampi(floori(low.x) - 1, 0, size_x - 1)
 	layer.iz0 = clampi(floori(low.y) - 1, 0, size_z - 1)
 	var ix1: int = clampi(ceili(high.x) + 1, 0, size_x - 1)
@@ -336,20 +343,39 @@ func _layer_for(surface: int) -> Layer:
 			var node: int = node_index(layer.ix0 + i, layer.iz0 + j)
 			var p: Vector2 = node_position_2d(node)
 			var k: int = j * layer.size_x + i
-			layer.clip[k] = field.visible_value(p, surface)
+			# Over the pieces the point is on (or the nearest one if none): the
+			# lowest value, so the pieces read as one area.
+			var on: PackedInt32Array = PackedInt32Array()
+			var nearest: int = members[0]
+			var nearest_distance: float = INF
+			for member: int in members:
+				var d: float = field.surfaces[member].shape.signed_distance(p)
+				if d <= HeightField.EDGE_SLACK:
+					on.append(member)
+				if d < nearest_distance:
+					nearest_distance = d
+					nearest = member
+			layer.clip[k] = field.level_visible_value(p, surface)
 			if p.distance_to(_start_2d) > _limit:
 				layer.values[k] = cell_size
 				continue
-			var blocked: float = -legality.stand_value(p, surface, CLEARANCE_CAP)
-			var value: float = cell_size
-			if blocked > EPSILON:
-				value = blocked
-			else:
-				var state: int = _state_at(node, surface)
-				if state != NONE and _cost[state] < INF:
-					value = maxf(_cost[state] + _surface_surcharge[surface] - movement_left, blocked)
+			if on.is_empty():
+				on.append(nearest)
+			var value: float = INF
+			for member: int in on:
+				value = minf(value, _node_value(node, p, member))
 			layer.values[k] = value
 	return layer
+
+
+func _node_value(node: int, p: Vector2, surface: int) -> float:
+	var blocked: float = -legality.stand_value(p, surface, CLEARANCE_CAP)
+	if blocked > EPSILON:
+		return blocked
+	var state: int = _state_at(node, surface)
+	if state != NONE and _cost[state] < INF:
+		return maxf(_cost[state] + _surface_surcharge[surface] - movement_left, blocked)
+	return cell_size
 
 
 func _build_grid(state: GameState) -> void:

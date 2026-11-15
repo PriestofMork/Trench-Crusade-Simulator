@@ -22,6 +22,15 @@ extends RefCounted
 ##   and there is headroom for the model's cylinder. Moves end on these (if no
 ##   other base is in the way).
 ##
+## The floor is the whole level surface, not one piece (terrain.md, "Where the
+## move ends"). Two surfaces *join* where their footprints meet and their
+## heights there agree within TOLERANCE (a row of sandbags, a platform made of
+## boxes, a ramp meeting a platform at its top, a ramp's foot and the table).
+## Joined surfaces in the same plane form a *level group*: walks cross between
+## them as if they were one surface, and they are one obstacle for the low
+## obstacle surcharge. Support counts the area over the model's level group and
+## over the floors directly joined to it near the seam; lower ground never counts.
+##
 ## "Higher than its floor" is measured against the floor's own plane, so on a
 ## ramp the base may dip into the ramp uphill. A walkable top that rises from
 ## at or below the floor at the base centre (the foot of a ramp, the top of a
@@ -132,6 +141,23 @@ var cells_z: int
 var _passing: Array = []
 ## Model height -> per surface obstacles for headroom.
 var _headroom_cache: Dictionary = {}
+## Per surface, the surfaces it joins.
+var _joins: Array[PackedInt32Array] = []
+## Per surface, its level group (an index into _group_members).
+var _level_group: PackedInt32Array = PackedInt32Array()
+var _group_members: Array[PackedInt32Array] = []
+## Per surface, the floor that supports a base there, as non-overlapping convex shapes.
+var _support_shapes: Array = []
+## Per level group, its outline without the seams (see _build_group_outlines()).
+var _group_outlines: Array[PackedVector2Array] = []
+## (a * surface count + b) -> where surfaces a and b join.
+var _join_regions: Dictionary[int, PackedVector2Array] = {}
+## Piece id -> surface index.
+var _surface_of_piece: Dictionary[int, int] = {}
+## How far around a seam a joined floor of another plane counts as support:
+## more than the largest base radius.
+const SUPPORT_REACH: float = 1.5
+
 ## Per cell, the surfaces and the solids whose footprint may reach it.
 var _cell_surfaces: Array[PackedInt32Array] = []
 var _cell_solids: Array[PackedInt32Array] = []
@@ -184,6 +210,11 @@ func _init(state: GameState) -> void:
 	for surface: Surface in surfaces:
 		_passing.append(_obstacles_for(surface, TOLERANCE))
 		surface.low_obstacle_height = _low_obstacle_height(surface)
+		_surface_of_piece[surface.piece_id()] = surface.index
+	_build_joins()
+	_build_group_outlines()
+	for surface: Surface in surfaces:
+		_support_shapes.append(_build_support(surface.index))
 	_build_cells()
 
 
@@ -207,11 +238,31 @@ func is_low_obstacle(surface: int) -> bool:
 
 ## What a move ending on `surface` pays on top of its path for stopping on a
 ## low obstacle: its height, unless the move started on that same piece.
+## Adjoining low obstacles of the same height (a row of sandbags) are one
+## obstacle: starting on any of them waives it.
 func stop_surcharge(surface: int, start_piece_ids: PackedInt32Array) -> float:
 	var s: Surface = surfaces[surface]
-	if s.low_obstacle_height <= 0.0 or start_piece_ids.has(s.piece_id()):
+	if s.low_obstacle_height <= 0.0:
 		return 0.0
+	for piece_id: int in start_piece_ids:
+		if _surface_of_piece.has(piece_id) and same_level(_surface_of_piece[piece_id], surface):
+			return 0.0
 	return s.low_obstacle_height
+
+
+## Whether two surfaces are in one level group (joined, in the same plane).
+func same_level(a: int, b: int) -> bool:
+	return _level_group[a] == _level_group[b]
+
+
+## The surfaces in a surface's level group (itself included).
+func level_members(surface: int) -> PackedInt32Array:
+	return _group_members[_level_group[surface]]
+
+
+## The surfaces a surface joins.
+func joined_surfaces(surface: int) -> PackedInt32Array:
+	return _joins[surface]
 
 
 ## The surfaces that are a floor at p: p is over the surface's footprint and
@@ -253,6 +304,38 @@ func is_floor(p: Vector2, surface: int) -> bool:
 func visible_value(p: Vector2, surface: int, cap: float = NEAR_CAP) -> float:
 	cap = minf(cap, NEAR_CAP)
 	var best: float = maxf(surfaces[surface].shape.signed_distance(p), -cap)
+	return _uncovered(p, surface, best)
+
+
+## visible_value() for a whole level surface: its pieces together, so the
+## seams between them are inside, not edges.
+func level_visible_value(p: Vector2, surface: int, cap: float = NEAR_CAP) -> float:
+	cap = minf(cap, NEAR_CAP)
+	var members: PackedInt32Array = level_members(surface)
+	if members.size() == 1:
+		return visible_value(p, surface, cap)
+	var inside: bool = false
+	var outside: float = INF
+	for member: int in members:
+		var d: float = surfaces[member].shape.signed_distance(p)
+		if d <= 0.0:
+			inside = true
+		outside = minf(outside, d)
+	var best: float = outside
+	if inside:
+		# Distance to the outline of the whole surface, seams left out.
+		best = -cap
+		var outline: PackedVector2Array = _group_outlines[_level_group[surface]]
+		for k: int in range(0, outline.size(), 2):
+			best = maxf(best, -PlanarGeometry.point_segment_distance(p, outline[k], outline[k + 1]))
+	best = maxf(best, -cap)
+	for member: int in members:
+		best = _uncovered(p, member, best)
+	return best
+
+
+## Raises `best` to positive inside terrain that covers `surface` at p.
+func _uncovered(p: Vector2, surface: int, best: float) -> float:
 	var by_solid: Array = _passing[surface]
 	for index: int in _near_solids[_cell_at(p)]:
 		var obstacle: Obstacle = by_solid[index]
@@ -260,6 +343,51 @@ func visible_value(p: Vector2, surface: int, cap: float = NEAR_CAP) -> float:
 			continue
 		best = maxf(best, -obstacle.shape.signed_distance(p))
 	return best
+
+
+## For each level group, the edges of its pieces that are not shared with
+## another piece of the group, as pairs of points.
+func _build_group_outlines() -> void:
+	for members: PackedInt32Array in _group_members:
+		var outline: PackedVector2Array = PackedVector2Array()
+		for member: int in members:
+			var polygon: PackedVector2Array = surfaces[member].polygon
+			for i: int in polygon.size():
+				var a: Vector2 = polygon[i]
+				var b: Vector2 = polygon[(i + 1) % polygon.size()]
+				# Cut out the parts of the edge that lie on another piece.
+				var keep: Array[Vector2] = [Vector2(0, 1)]
+				for other: int in members:
+					if other == member:
+						continue
+					var grown: PackedVector2Array = _grown(surfaces[other].polygon, EDGE_SLACK * 2.0)
+					var span: Vector2 = PlanarGeometry.segment_polygon_clip(a, b, grown)
+					if span.x > span.y:
+						continue
+					var next: Array[Vector2] = []
+					for piece: Vector2 in keep:
+						if span.x > piece.x:
+							next.append(Vector2(piece.x, minf(span.x, piece.y)))
+						if span.y < piece.y:
+							next.append(Vector2(maxf(span.y, piece.x), piece.y))
+					keep = next
+				for piece: Vector2 in keep:
+					if piece.y - piece.x > 1e-6:
+						outline.append(a.lerp(b, piece.x))
+						outline.append(a.lerp(b, piece.y))
+		_group_outlines.append(outline)
+
+
+## A convex polygon pushed out by `distance` along its edge normals.
+static func _grown(polygon: PackedVector2Array, distance: float) -> PackedVector2Array:
+	var centre: Vector2 = Vector2.ZERO
+	for corner: Vector2 in polygon:
+		centre += corner
+	centre /= polygon.size()
+	var result: PackedVector2Array = PackedVector2Array()
+	for corner: Vector2 in polygon:
+		result.append(corner + (corner - centre).normalized() * distance * 1.5)
+	return result
 
 
 ## The surfaces at p whose height there is within `tolerance` of y.
@@ -321,12 +449,14 @@ func support_fraction(p: Vector2, surface: int, radius: float) -> float:
 	var s: Surface = surfaces[surface]
 	if s.is_table():
 		return 1.0
-	var d: float = s.shape.signed_distance(p)
-	if d <= -radius:
+	if s.shape.signed_distance(p) <= -radius:
 		return 1.0
-	if d >= radius:
-		return 0.0
-	return PlanarGeometry.circle_polygon_area(p, radius, s.polygon) / (PI * radius * radius)
+	var total: float = 0.0
+	for shape: ConvexShape in _support_shapes[surface]:
+		if p.distance_to(shape.bound_center) >= shape.bound_radius + radius:
+			continue
+		total += PlanarGeometry.circle_polygon_area(p, radius, shape.polygon)
+	return minf(total / (PI * radius * radius), 1.0)
 
 
 ## Whether the base may walk straight from a to b on `surface`: every point of
@@ -525,10 +655,159 @@ func _table_clearance(p: Vector2, radius: float) -> float:
 ## distance to the edge where the edge is straight.
 func _support_value(p: Vector2, s: Surface, radius: float) -> float:
 	var d: float = -s.shape.signed_distance(p)
-	if d >= radius or d <= -radius:
+	if d >= radius:
 		return d
-	var fraction: float = PlanarGeometry.circle_polygon_area(p, radius, s.polygon) / (PI * radius * radius)
+	var fraction: float = support_fraction(p, s.index, radius)
+	if fraction >= 1.0 - 1e-9:
+		return radius
+	if fraction <= 0.0:
+		return minf(d, -radius)
 	return _straight_edge_offset(fraction, radius)
+
+
+func _build_joins() -> void:
+	var n: int = surfaces.size()
+	_joins.resize(n)
+	var join_regions: Dictionary[int, PackedVector2Array] = {}
+	for a: int in n:
+		for b: int in range(a + 1, n):
+			var region: PackedVector2Array = _join_region(surfaces[a], surfaces[b])
+			if region.is_empty():
+				continue
+			_joins[a].append(b)
+			_joins[b].append(a)
+			join_regions[a * n + b] = region
+			join_regions[b * n + a] = region
+	# Level groups: joins between surfaces in the same plane, closed over.
+	_level_group.resize(n)
+	_level_group.fill(-1)
+	for start: int in n:
+		if _level_group[start] != -1:
+			continue
+		var group: int = _group_members.size()
+		var members: PackedInt32Array = PackedInt32Array([start])
+		_level_group[start] = group
+		var k: int = 0
+		while k < members.size():
+			for other: int in _joins[members[k]]:
+				if _level_group[other] == -1 and _coplanar(surfaces[members[k]], surfaces[other]):
+					_level_group[other] = group
+					members.append(other)
+			k += 1
+		_group_members.append(members)
+	_join_regions = join_regions
+
+
+## Where two surfaces' footprints meet (within the edge slack) at heights
+## within TOLERANCE of each other; empty if they do not join.
+func _join_region(a: Surface, b: Surface) -> PackedVector2Array:
+	var region: PackedVector2Array = a.polygon
+	var orientation: float = signf(PlanarGeometry.polygon_double_area(b.polygon))
+	var count: int = b.polygon.size()
+	for i: int in count:
+		var p0: Vector2 = b.polygon[i]
+		var edge: Vector2 = b.polygon[(i + 1) % count] - p0
+		var inward: Vector2 = Vector2(-edge.y, edge.x).normalized() * orientation
+		region = PlanarGeometry.clip_polygon(region, inward, -inward.dot(p0) + EDGE_SLACK * 2.0)
+		if region.is_empty():
+			return region
+	# |height_a - height_b| <= TOLERANCE, as two half-planes.
+	var dg: Vector2 = a.gradient - b.gradient
+	var dh: float = a.height_at_origin - b.height_at_origin
+	region = _clip(region, -dg, TOLERANCE - dh)
+	region = _clip(region, dg, TOLERANCE + dh)
+	return region
+
+
+static func _coplanar(a: Surface, b: Surface) -> bool:
+	return a.gradient.is_equal_approx(b.gradient) and absf(a.height_at_origin - b.height_at_origin) <= TOLERANCE
+
+
+## The floor under a base on `surface`, as non-overlapping convex pieces: the
+## surface, the rest of its level group, and, near each seam, the floors of
+## another plane joined to them (less where terrain covers those).
+func _build_support(surface: int) -> Array:
+	var pieces: Array[PackedVector2Array] = []
+	var members: PackedInt32Array = level_members(surface)
+	_add_disjoint(pieces, surfaces[surface].polygon)
+	for member: int in members:
+		if member != surface:
+			_add_disjoint(pieces, surfaces[member].polygon)
+	var n: int = surfaces.size()
+	for member: int in members:
+		for other: int in _joins[member]:
+			if members.has(other):
+				continue
+			var near: PackedVector2Array = _around(_join_regions[member * n + other], SUPPORT_REACH)
+			var part: PackedVector2Array = _clip_by_box(surfaces[other].polygon, near)
+			if part.size() < 3:
+				continue
+			var parts: Array[PackedVector2Array] = [part]
+			for obstacle: Obstacle in _passing[other]:
+				if obstacle == null:
+					continue
+				var next: Array[PackedVector2Array] = []
+				for piece: PackedVector2Array in parts:
+					next.append_array(_subtract(piece, obstacle.polygon))
+				parts = next
+			for piece: PackedVector2Array in parts:
+				_add_disjoint(pieces, piece)
+	var shapes: Array = []
+	for piece: PackedVector2Array in pieces:
+		shapes.append(ConvexShape.from_polygon(piece))
+	return shapes
+
+
+## Adds the part of `polygon` not already in `pieces`, as convex pieces.
+static func _add_disjoint(pieces: Array[PackedVector2Array], polygon: PackedVector2Array) -> void:
+	var rest: Array[PackedVector2Array] = [polygon]
+	for existing: PackedVector2Array in pieces:
+		var next: Array[PackedVector2Array] = []
+		for piece: PackedVector2Array in rest:
+			next.append_array(_subtract(piece, existing))
+		rest = next
+	for piece: PackedVector2Array in rest:
+		if absf(PlanarGeometry.polygon_double_area(piece)) > 1e-9:
+			pieces.append(piece)
+
+
+## Convex p minus convex q, as convex pieces.
+static func _subtract(p: PackedVector2Array, q: PackedVector2Array) -> Array[PackedVector2Array]:
+	var result: Array[PackedVector2Array] = []
+	if q.size() < 3 or absf(PlanarGeometry.polygon_double_area(q)) <= 1e-12:
+		result.append(p)
+		return result
+	var orientation: float = signf(PlanarGeometry.polygon_double_area(q))
+	var rest: PackedVector2Array = p
+	var count: int = q.size()
+	for i: int in count:
+		var p0: Vector2 = q[i]
+		var edge: Vector2 = q[(i + 1) % count] - p0
+		var outward: Vector2 = Vector2(edge.y, -edge.x).normalized() * orientation
+		var outside: PackedVector2Array = PlanarGeometry.clip_polygon(rest, outward, -outward.dot(p0))
+		if outside.size() >= 3 and absf(PlanarGeometry.polygon_double_area(outside)) > 1e-12:
+			result.append(outside)
+		rest = PlanarGeometry.clip_polygon(rest, -outward, outward.dot(p0))
+		if rest.size() < 3:
+			break
+	return result
+
+
+## Bounding box of a polygon grown by `grow`, as [min, max].
+static func _around(polygon: PackedVector2Array, grow: float) -> PackedVector2Array:
+	var low: Vector2 = Vector2(INF, INF)
+	var high: Vector2 = Vector2(-INF, -INF)
+	for corner: Vector2 in polygon:
+		low = low.min(corner)
+		high = high.max(corner)
+	return PackedVector2Array([low - Vector2(grow, grow), high + Vector2(grow, grow)])
+
+
+static func _clip_by_box(polygon: PackedVector2Array, box: PackedVector2Array) -> PackedVector2Array:
+	var result: PackedVector2Array = PlanarGeometry.clip_polygon(polygon, Vector2(1, 0), -box[0].x)
+	result = PlanarGeometry.clip_polygon(result, Vector2(-1, 0), box[1].x)
+	result = PlanarGeometry.clip_polygon(result, Vector2(0, 1), -box[0].y)
+	return PlanarGeometry.clip_polygon(result, Vector2(0, -1), box[1].y)
 
 
 ## Inverse of the share of a circle on the inner side of a straight line at

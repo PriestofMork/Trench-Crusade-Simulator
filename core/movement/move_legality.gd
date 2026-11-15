@@ -229,10 +229,8 @@ func segment_cost(u: Vector3, v: Vector3) -> float:
 	var best: float = INF
 	var best_kind: Transitions.Kind = Transitions.Kind.NONE
 	var reason: Result = Result.NO_FLOOR
-	for s: int in su_list:
-		if not sv_list.has(s):
-			continue
-		var walk: Result = walk_result(u2, v2, s)
+	for s: int in _walk_surfaces(su_list, sv_list):
+		var walk: Result = level_walk_result(u2, v2, s)
 		if walk == Result.OK:
 			var length: float = walk_length(u2, v2, s)
 			if length < best:
@@ -261,14 +259,61 @@ func segment_cost(u: Vector3, v: Vector3) -> float:
 
 ## Like segment_cost(), but only as a walk on one surface (INF otherwise).
 func walk_cost(u: Vector3, v: Vector3) -> float:
-	var sv_list: PackedInt32Array = surfaces_at(v)
 	var u2: Vector2 = Vector2(u.x, u.z)
 	var v2: Vector2 = Vector2(v.x, v.z)
 	var best: float = INF
-	for s: int in surfaces_at(u):
-		if sv_list.has(s) and walk_result(u2, v2, s) == Result.OK:
+	for s: int in _walk_surfaces(surfaces_at(u), surfaces_at(v)):
+		if level_walk_result(u2, v2, s) == Result.OK:
 			best = minf(best, walk_length(u2, v2, s))
 	return best
+
+
+## One surface per level group that both ends of a walk are on.
+func _walk_surfaces(su_list: PackedInt32Array, sv_list: PackedInt32Array) -> PackedInt32Array:
+	var result: PackedInt32Array = PackedInt32Array()
+	for su: int in su_list:
+		for sv: int in sv_list:
+			if not field.same_level(su, sv):
+				continue
+			var seen: bool = false
+			for s: int in result:
+				if field.same_level(s, su):
+					seen = true
+			if not seen:
+				result.append(su)
+	return result
+
+
+## Whether the base may walk straight from a to b on the level surface that
+## `surface` is part of: across the seams between its pieces as if they were
+## one. The way is split where it crosses from piece to piece, and each part is
+## a walk_result() on its piece.
+func level_walk_result(a: Vector2, b: Vector2, surface: int) -> Result:
+	var members: PackedInt32Array = field.level_members(surface)
+	var length: float = a.distance_to(b)
+	if members.size() == 1 or length < EPSILON:
+		return walk_result(a, b, surface)
+	var spans: Array[Vector3] = []  # (from, to, piece surface) along the way
+	for member: int in members:
+		var span: Vector2 = PlanarGeometry.segment_polygon_clip(a, b, field.surfaces[member].polygon)
+		if span.x <= span.y:
+			spans.append(Vector3(span.x, span.y, member))
+	var slack: float = HeightField.EDGE_SLACK / length
+	var at: float = 0.0
+	while at < 1.0 - slack:
+		var best_end: float = at
+		var best_member: int = -1
+		for span: Vector3 in spans:
+			if span.x <= at + slack and span.y > best_end:
+				best_end = span.y
+				best_member = int(span.z)
+		if best_member == -1:
+			return Result.NO_FLOOR
+		var result: Result = walk_result(a.lerp(b, at), a.lerp(b, minf(best_end, 1.0)), best_member)
+		if result != Result.OK:
+			return result
+		at = best_end
+	return Result.OK
 
 
 ## Whether a move may end at p, and what it pays on top of its path for
