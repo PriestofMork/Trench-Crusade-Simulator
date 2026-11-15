@@ -22,8 +22,12 @@ The reverse of blood markers. Spent by the model's own player:
 
 ## Infection markers
 
-- Work exactly like blood markers, but are placed only by specific effects.
-- A model's infection markers increase by 1 each time it activates.
+- Spent exactly like blood markers, by the opposing player, on the same rolls and
+  with the same effect. In a prompt, blood and infection markers on the model are
+  offered together, and the player chooses how many of each to spend.
+- Placed only by specific effects, never by ordinary injury rolls.
+- At the start of a model's activation, if it has at least one infection marker, it
+  gains one more (up to the cap).
 
 ## Sin markers
 
@@ -48,6 +52,7 @@ The reverse of blood markers. Spent by the model's own player:
 
 ## Open questions
 
-1. Does the infection increase apply only to models that already have at least one
-   infection marker? (Assumed yes.)
-2. What can a model do if it is prevented from standing up?
+1. Infection growth: "start of the turn" is read as the start of the model's own
+   activation, not the start of the game turn. (Assumed.)
+2. Do infection markers count towards the 6 (or 3) needed for a Bloodbath? (Assumed yes.)
+3. What can a model do if it is prevented from standing up?
