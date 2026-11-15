@@ -7,6 +7,11 @@ extends SceneTree
 ## Run with a rendering driver (not --headless):
 ##   Godot_v4.7.2-stable_win64_console.exe --path . --resolution 1600x900 -s tools/capture_movement.gd -- <output folder>
 ##
+## Since brief 005 a model only gets a movement indicator on its own turn,
+## so this script (written for brief 004's free movement) no longer runs to
+## the end: selections that get no indicator time out. tools/capture_turns.gd
+## drives the turn flow.
+##
 ## Model ids are the order of "models" in data/tables/height_test_table.json:
 ## 1 ramp walker, 2 wall climber, 3 on the platform, 4 sandbag crosser,
 ## 5 crate stopper, 6 tower climber, 7 bridge walker, 8 enemy on the deck,
@@ -117,15 +122,18 @@ func _run() -> void:
 	print("after clicking the deck: sliding %s" % _main.is_sliding())
 	while _main.is_sliding():
 		await process_frame
-	print("model 8 now at %s, %.2f\" left" % [_main.state.get_model(8).position, _main.state.get_model(8).movement_left])
+	print("model 8 now at %s, movement %.1f\"" % [_main.state.get_model(8).position, _main.state.get_model(8).movement])
 	quit()
 
 
 func _select(id: int) -> void:
 	_main.set_hover_override(null)
 	_main.select_model(id)
-	while not _main.is_reach_ready():
+	for i: int in 600:
+		if _main.is_reach_ready():
+			return
 		await process_frame
+	print("model %d got no movement indicator (not its turn)" % id)
 
 
 ## Moves the selected model there, saving frames during the slide and after it.
@@ -144,7 +152,7 @@ func _move_and_film(target: Vector3, file_name: String, focus: Vector3, yaw: flo
 		if _main.is_sliding():
 			await _shot("%s_%d" % [file_name, frame])
 			frame += 1
-	print("  model %d now at %s, %.2f\" left" % [id, _main.state.get_model(id).position, _main.state.get_model(id).movement_left])
+	print("  model %d now at %s, movement %.1f\"" % [id, _main.state.get_model(id).position, _main.state.get_model(id).movement])
 	while not _main.is_reach_ready():
 		await process_frame
 	await _shot("%s_after" % file_name)
