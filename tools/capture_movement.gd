@@ -1,12 +1,19 @@
 extends SceneTree
-## Opens the main scene, drives a select / hover / move sequence through the
-## main scene's public methods, and saves a screenshot after each step. For
-## checking the movement indicator without clicking in the window.
+## Opens the main scene (the brief 004 height test table), drives select /
+## hover / move sequences through the main scene's public methods, and saves a
+## screenshot after each step. For checking movement and the indicator
+## without clicking in the window.
 ##
 ## Run with a rendering driver (not --headless):
 ##   Godot_v4.7.2-stable_win64_console.exe --path . --resolution 1600x900 -s tools/capture_movement.gd -- <output folder>
+##
+## Model ids are the order of "models" in data/tables/height_test_table.json:
+## 1 ramp walker, 2 wall climber, 3 on the platform, 4 sandbag crosser,
+## 5 crate stopper, 6 tower climber, 7 bridge walker, 8 enemy on the deck,
+## 9 under the deck.
 
 var _main: Node3D
+var _camera: TableCamera
 var _out_dir: String
 
 
@@ -24,116 +31,120 @@ func _initialize() -> void:
 
 func _run() -> void:
 	await _frames(5)
-	var camera: TableCamera = _main.get_node("TableCamera")
+	_camera = _main.get_node("TableCamera")
 
-	# 1. Whole table, model 1 selected, hovering a point round the corner of the box.
-	_main.select_model(1)
-	_main.set_hover_override(Vector3(15.5, 0, 19.6))
-	await _shot("01_table_selected")
+	# 0. The whole test table.
+	_look(Vector3(24, 0, 26), 0.0, deg_to_rad(58), 62.0)
+	await _shot("00_test_table")
 
-	# 2. Close up, from above at an angle, same hover.
-	_look(camera, Vector3(18, 0, 21), 0.35, deg_to_rad(62), 22.0)
-	await _shot("02_close_hover_round_box")
+	# 1. Ramp walker: the area runs up the ramp and onto the platform.
+	await _select(1)
+	_look(Vector3(10, 1, 15), 0.5, deg_to_rad(40), 20.0)
+	_main.set_hover_override(Vector3(11.8, 2, 14))
+	await _shot("01_ramp_walker_hover_platform")
+	_look(Vector3(8, 1, 14), 1.4, deg_to_rad(25), 12.0)
+	await _shot("01b_indicator_lies_on_the_ramp")
+	await _move_and_film(Vector3(11.8, 2, 14), "01c_ramp_walk", Vector3(10, 1, 15), 0.5, deg_to_rad(40), 20.0)
 
-	# 3. Steeper, closer, to see the line quality.
-	_look(camera, Vector3(19.5, 0, 24.5), 0.2, deg_to_rad(75), 10.0)
-	await _shot("03_detail_enemy_and_box")
+	# 2. Wall climber: up the 2" wall and on, in one move.
+	await _select(2)
+	_look(Vector3(26, 1, 15.5), -0.6, deg_to_rad(35), 16.0)
+	_main.set_hover_override(Vector3(26.3, 2, 14.6))
+	await _shot("02_wall_climber_hover")
+	await _move_and_film(Vector3(26.3, 2, 14.6), "02b_climb", Vector3(26, 1, 15.5), -0.6, deg_to_rad(35), 16.0)
 
-	# 4. Hover outside the area: red ghost, no path.
-	_look(camera, Vector3(18, 0, 21), 0.35, deg_to_rad(62), 22.0)
-	_main.set_hover_override(Vector3(23.5, 0, 17.0))
-	await _shot("04_hover_outside")
+	# 3. Sandbag crosser: straight over, nothing extra.
+	await _select(4)
+	_look(Vector3(7, 0, 38.5), 0.9, deg_to_rad(40), 14.0)
+	_main.set_hover_override(Vector3(7, 0, 35.5))
+	await _shot("03_sandbags_hover")
+	await _move_and_film(Vector3(7, 0, 35.5), "03b_sandbags", Vector3(7, 0, 38.5), 0.9, deg_to_rad(40), 14.0)
 
-	# 4b. Hover behind the friendly model 7: the path runs straight through its base.
-	_look(camera, Vector3(20.5, 0, 19.5), 0.35, deg_to_rad(65), 16.0)
-	_main.set_hover_override(Vector3(23.6, 0, 18.6))
-	await _shot("04b_path_through_friend")
+	# 4. Crate stopper: onto the crate, the label shows the surcharge; the small crate is no destination.
+	await _select(5)
+	_look(Vector3(16.5, 0.5, 39.5), 0.4, deg_to_rad(42), 14.0)
+	_main.set_hover_override(Vector3(15, 1, 38.5))
+	await _shot("04_crate_hover_surcharge")
+	_main.set_hover_override(Vector3(19.5, 1, 38))
+	await _shot("04b_small_crate_hover")
+	await _move_and_film(Vector3(15, 1, 38.5), "04c_onto_crate", Vector3(16.5, 0.5, 39.5), 0.4, deg_to_rad(42), 14.0)
 
-	# 4c. Hover on model 7's centre: outside the area (friendly bases are holes
-	# in it), so the ghost is red.
-	_main.set_hover_override(Vector3(22.2, 0, 19.0))
-	await _shot("04c_hover_on_friend_centre")
+	# 5. On the platform: hop down.
+	await _select(3)
+	_look(Vector3(15, 1, 16), 0.3, deg_to_rad(38), 14.0)
+	_main.set_hover_override(Vector3(15.5, 0, 19))
+	await _shot("05_platform_hover_below")
+	await _move_and_film(Vector3(15.5, 0, 19), "05b_hop_down", Vector3(15, 1, 16), 0.3, deg_to_rad(38), 14.0)
 
-	# 4c2. Hover on model 7's rim: the ghost snaps to touching its base.
-	_main.set_hover_override(Vector3(22.0 - 0.55, 0, 19.0 + 0.1))
-	await _shot("04c2_hover_on_friend_rim_snaps")
+	# 6. Tower climber: only by the ladder.
+	await _select(6)
+	_look(Vector3(24, 2, 27), 0.3, deg_to_rad(35), 16.0)
+	_main.set_hover_override(Vector3(24, 4, 27))
+	await _shot("06_tower_hover_top")
+	await _move_and_film(Vector3(24, 4, 27), "06b_ladder_up", Vector3(24, 2, 27), 0.3, deg_to_rad(35), 16.0)
 
-	# 4d. Close up at the box wall (x 11..17, z 14..18): the area reaches the wall
-	# and a cursor right at the wall puts the base against it.
-	_look(camera, Vector3(16, 0, 18.5), 0.6, deg_to_rad(70), 9.0)
-	_main.set_hover_override(Vector3(16.2, 0, 18.05))
-	await _shot("04d_wall_close_up")
+	# 7. Bridge walker: both levels, under the deck and on it.
+	await _select(7)
+	_look(Vector3(32, 1.5, 39), 0.25, deg_to_rad(22), 20.0)
+	_main.set_hover_override(Vector3(33, 0, 38))
+	await _shot("07_bridge_hover_under")
+	_main.set_hover_override(Vector3(33, 3.5, 38))
+	await _shot("07b_bridge_hover_on_top")
+	_look(Vector3(32, 0, 38), 0.25, deg_to_rad(70), 24.0)
+	await _shot("07c_bridge_from_above")
+	await _move_and_film(Vector3(33, 3.5, 38), "07d_onto_deck", Vector3(32, 1.5, 39), 0.25, deg_to_rad(22), 20.0)
 
-	# 4e. Move through model 7, then back again through it after R.
+	# 8. Under the deck, below the enemy on it: the 1" rule is measured in 3D.
+	await _select(9)
+	_look(Vector3(34, 1, 36), 0.1, deg_to_rad(18), 16.0)
+	_main.set_hover_override(Vector3(36.5, 0, 38))
+	await _shot("08_under_enemy_on_deck")
+
+	# 9. The real input path: a click on the enemy on the deck, then a click on the deck.
 	_main.set_hover_override(null)
-	print("move through friend: '%s'" % _main.move_selected_to(Vector3(23.6, 0, 18.6)))
-	while _main.is_sliding():
-		await process_frame
-	print("model 1 now at %s" % _main.state.get_model(1).position)
-	_look(camera, Vector3(20.5, 0, 19.5), 0.35, deg_to_rad(65), 16.0)
-	_main.set_hover_override(Vector3(23.6, 0, 21.5))
-	await _shot("04e_after_move_through_friend")
-	_key(KEY_R)
-	print("move back: '%s'" % _main.move_selected_to(Vector3(18, 0, 20)))
-	while _main.is_sliding():
-		await process_frame
-	_key(KEY_R)
-	_look(camera, Vector3(18, 0, 21), 0.35, deg_to_rad(62), 22.0)
-
-	# 5. Move round the corner of the box and look at what is left.
-	_main.set_hover_override(null)
-	var error: String = _main.move_selected_to(Vector3(15.5, 0, 19.6))
-	print("move: '%s'" % error)
-	while _main.is_sliding():
-		await process_frame
-	_main.set_hover_override(Vector3(13.8, 0, 19.0))
-	await _shot("05_after_move")
-
-	# 6. Another model (8" move): hover behind a box, so the path bends round its corner.
-	_main.select_model(5)
-	_main.set_hover_override(Vector3(36.8, 0, 28.4))
-	_look(camera, Vector3(32, 0, 28), 0.9, deg_to_rad(60), 24.0)
-	await _shot("06_model5_path_round_box")
-
-	# 7. Make that move and look at what is left.
-	_main.set_hover_override(null)
-	print("move: '%s'" % _main.move_selected_to(Vector3(36.8, 0, 28.4)))
-	while _main.is_sliding():
-		await process_frame
-	_main.set_hover_override(Vector3(36, 0, 25))
-	await _shot("07_model5_after_move")
-
-	# 8. The real input path: keys and clicks pushed as input events.
-	_main.set_hover_override(null)
-	_look(camera, Vector3(24, 0, 22), 0.0, deg_to_rad(70), 40.0)
+	_main.deselect()
+	_look(Vector3(35, 2, 38), 0.0, deg_to_rad(55), 18.0)
 	await _frames(2)
-	_key(KEY_R)
-	print("after R: %.1f\" left" % _main.state.get_model(5).movement_left)
-	_key(KEY_ESCAPE)
-	print("after Esc: selected %d" % _main.selected_model_id())
-	var model_3: Vector3 = _main.state.get_model(3).position + Vector3(0, 1, 0)
-	print("model 3 on screen at %s" % camera.unproject_position(model_3))
-	_click(camera.unproject_position(model_3))
-	print("after clicking model 3: selected %d" % _main.selected_model_id())
-	var target: Vector3 = _main.state.get_model(3).position + Vector3(-3, 0, 2)
-	_click(camera.unproject_position(target))
-	print("after clicking the area: sliding %s" % _main.is_sliding())
-	_click(camera.unproject_position(_main.state.get_model(1).position + Vector3(0, 1, 0)))
-	print("click while sliding ignored: selected %d" % _main.selected_model_id())
+	var model_8: Vector3 = _main.state.get_model(8).position + Vector3(0, 1, 0)
+	_click(_camera.unproject_position(model_8))
+	print("after clicking model 8: selected %d" % _main.selected_model_id())
+	while not _main.is_reach_ready():
+		await process_frame
+	_click(_camera.unproject_position(Vector3(33.5, 3.5, 38.5)))
+	print("after clicking the deck: sliding %s" % _main.is_sliding())
 	while _main.is_sliding():
 		await process_frame
-	print("model 3 now at %s, %.2f\" left" % [_main.state.get_model(3).position, _main.state.get_model(3).movement_left])
-	_click(camera.unproject_position(Vector3(5, 0, 44)))
-	print("after clicking far table: selected %d" % _main.selected_model_id())
+	print("model 8 now at %s, %.2f\" left" % [_main.state.get_model(8).position, _main.state.get_model(8).movement_left])
 	quit()
 
 
-func _key(code: Key) -> void:
-	var event: InputEventKey = InputEventKey.new()
-	event.physical_keycode = code
-	event.keycode = code
-	event.pressed = true
-	root.push_input(event)
+func _select(id: int) -> void:
+	_main.set_hover_override(null)
+	_main.select_model(id)
+	while not _main.is_reach_ready():
+		await process_frame
+
+
+## Moves the selected model there, saving frames during the slide and after it.
+func _move_and_film(target: Vector3, file_name: String, focus: Vector3, yaw: float, pitch: float, distance: float) -> void:
+	_main.set_hover_override(null)
+	var id: int = _main.selected_model_id()
+	var destination: Variant = _main.destination_for(target)
+	var error: String = "no destination near %s" % target
+	if destination != null:
+		error = _main.move_selected_to(destination)
+	print("%s: move model %d to %s: '%s'" % [file_name, id, target, error])
+	_look(focus, yaw, pitch, distance)
+	var frame: int = 0
+	while _main.is_sliding():
+		await _frames(9)
+		if _main.is_sliding():
+			await _shot("%s_%d" % [file_name, frame])
+			frame += 1
+	print("  model %d now at %s, %.2f\" left" % [id, _main.state.get_model(id).position, _main.state.get_model(id).movement_left])
+	while not _main.is_reach_ready():
+		await process_frame
+	await _shot("%s_after" % file_name)
 
 
 ## `at` is in viewport coordinates (as unproject_position() gives); input events
@@ -151,12 +162,12 @@ func _click(viewport_at: Vector2) -> void:
 	root.push_input(release)
 
 
-func _look(camera: TableCamera, focus: Vector3, yaw: float, pitch: float, distance: float) -> void:
-	camera.focus = focus
-	camera.yaw = yaw
-	camera.pitch = pitch
-	camera.distance = distance
-	camera._update_transform()
+func _look(focus: Vector3, yaw: float, pitch: float, distance: float) -> void:
+	_camera.focus = focus
+	_camera.yaw = yaw
+	_camera.pitch = pitch
+	_camera.distance = distance
+	_camera._update_transform()
 
 
 func _shot(file_name: String) -> void:

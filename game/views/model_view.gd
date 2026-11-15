@@ -51,15 +51,18 @@ func set_selected(selected: bool) -> void:
 	_material.emission_energy_multiplier = 0.35
 
 
-## Animates the view along `path` (table positions of the base, start first) and
-## calls `on_done` at the end.
+## Animates the view along `path` (positions of the base, start first, with
+## climbs and drops already split into their vertical and horizontal parts) at
+## one steady speed, as one motion, and calls `on_done` at the end.
 func slide_along(path: Array[Vector3], on_done: Callable) -> void:
 	if _tween != null and _tween.is_running():
 		_tween.kill()
 	_tween = create_tween()
 	for i: int in range(1, path.size()):
-		var length: float = Vector2(path[i].x - path[i - 1].x, path[i].z - path[i - 1].z).length()
-		var duration: float = maxf(length / SLIDE_SPEED_INCHES_PER_SECOND, 0.05)
+		var length: float = path[i].distance_to(path[i - 1])
+		if length < 0.0001:
+			continue
+		var duration: float = length / SLIDE_SPEED_INCHES_PER_SECOND
 		_tween.tween_property(self, "position", path[i] + Vector3(0.0, height / 2.0, 0.0), duration)
 	_tween.tween_callback(on_done)
 

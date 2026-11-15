@@ -1,7 +1,8 @@
 class_name PathPreview
 extends Node3D
-## The hover preview for a move: the path from the model to the cursor and a
-## ghost of the base at the destination, blue if it can go there, red if not.
+## The hover preview for a move: the path from the model to the cursor, with
+## its climbs and drops drawn as vertical parts, and a ghost of the base at the
+## destination (lying on its floor), blue if it can go there, red if not.
 
 const PATH_COLOUR: Color = Color(0.85, 0.94, 1.0, 1.0)
 const GHOST_OK_COLOUR: Color = Color(0.45, 0.78, 1.0)
@@ -36,8 +37,12 @@ func hide_all() -> void:
 
 
 ## Shows the ghost base at `destination` and, if `path` is not empty, the path
-## from `start` through it.
-func show_preview(start: Vector3, path: Array[Vector3], destination: Vector3, base_radius: float) -> void:
+## from `start` through it (points as they should be drawn, vertical parts
+## included). `floor_normal` is the up direction of the floor at the destination.
+func show_preview(
+	start: Vector3, path: Array[Vector3], destination: Vector3, base_radius: float,
+	floor_normal: Vector3 = Vector3.UP
+) -> void:
 	if not is_equal_approx(base_radius, _radius):
 		_radius = base_radius
 		_ghost_fill.mesh = _disc_mesh(base_radius)
@@ -46,9 +51,10 @@ func show_preview(start: Vector3, path: Array[Vector3], destination: Vector3, ba
 	var colour: Color = GHOST_OK_COLOUR if reachable else GHOST_BAD_COLOUR
 	_fill_material.albedo_color = Color(colour, 0.22)
 	_ring_material.albedo_color = Color(colour, 0.95)
-	var at: Vector3 = Vector3(destination.x, destination.y + HEIGHT, destination.z)
-	_ghost_fill.position = at
-	_ghost_ring.position = at
+	var tilt: Basis = Basis(Quaternion(Vector3.UP, floor_normal.normalized()))
+	var at: Vector3 = destination + floor_normal.normalized() * HEIGHT
+	_ghost_fill.transform = Transform3D(tilt, at)
+	_ghost_ring.transform = Transform3D(tilt, at)
 	_ghost_fill.visible = true
 	_ghost_ring.visible = true
 	if reachable:
@@ -69,11 +75,17 @@ func _polyline_mesh(points: Array[Vector3]) -> ArrayMesh:
 		var along: Vector3 = b - a
 		if along.length_squared() < 0.000001:
 			continue
+		var flat: Vector3 = Vector3(along.x, 0, along.z)
+		if flat.length() < 0.001:
+			# Straight up or down: two crossed ribbons, so it shows from any side.
+			for side: Vector3 in [Vector3(half, 0, 0), Vector3(0, 0, half)]:
+				vertices.append_array([a - side, b - side, b + side, a - side, b + side, a + side])
+			continue
 		var side: Vector3 = Vector3(-along.z, 0, along.x).normalized() * half
 		vertices.append_array([a - side, b - side, b + side, a - side, b + side, a + side])
 		# A round-ish joint: a small square turned to the segment, enough at this width.
 		if i > 0:
-			var fwd: Vector3 = along.normalized() * half
+			var fwd: Vector3 = flat.normalized() * half
 			vertices.append_array([a - side - fwd, a - side, a + side, a - side - fwd, a + side, a + side - fwd])
 	var mesh: ArrayMesh = ArrayMesh.new()
 	if vertices.is_empty():

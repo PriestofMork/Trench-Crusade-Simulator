@@ -21,7 +21,7 @@
 		{"name": "bridge ramp east", "center": [41, 38], "size": [6, 3.5, 3], "shape": "ramp", "turn": 180}
 	],
 	"models": [
-		{"name": "ramp walker", "player": 0, "at": [3.5, 0, 14], "base": 32, "movement": 8},
+		{"name": "ramp walker", "player": 0, "at": [4.3, 0, 14], "base": 32, "movement": 8},
 		{"name": "wall climber", "player": 0, "at": [26, 0, 18], "base": 32, "movement": 6},
 		{"name": "on the platform", "player": 0, "at": [15, 2, 15], "base": 25, "movement": 5},
 		{"name": "sandbag crosser", "player": 0, "at": [7, 0, 41], "base": 25, "movement": 6},
