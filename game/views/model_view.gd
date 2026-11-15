@@ -18,6 +18,9 @@ var _colour: Color
 var _material: StandardMaterial3D
 var _ring: MeshInstance3D
 var _tween: Tween
+var _label: Label3D
+var _selected: bool = false
+var _activated: bool = false
 
 
 func setup(model: ModelState) -> void:
@@ -35,6 +38,7 @@ func setup(model: ModelState) -> void:
 	_material.albedo_color = _colour
 	material_override = _material
 	_build_ring()
+	_build_label()
 	sync(model)
 
 
@@ -45,9 +49,38 @@ func sync(model: ModelState) -> void:
 
 
 func set_selected(selected: bool) -> void:
+	_selected = selected
 	_ring.visible = selected
-	_material.emission_enabled = selected
-	_material.emission = _colour.lerp(Color.WHITE, 0.6) if selected else Color.BLACK
+	_apply_look()
+
+
+## Shows the model's id, markers and Down state above it, and greys out a
+## model that has activated this turn.
+func show_status(model: ModelState, activated: bool, activating: bool) -> void:
+	_activated = activated and not activating
+	var parts: PackedStringArray = PackedStringArray([str(model.id)])
+	var short_names: Dictionary[StringName, String] = {
+		Markers.BLOOD: "Bl", Markers.BLESSING: "Bs", Markers.INFECTION: "In"
+	}
+	for kind: StringName in Markers.KINDS:
+		if model.marker_count(kind) > 0:
+			parts.append("%s%d" % [short_names.get(kind, String(kind)), model.marker_count(kind)])
+	if model.down:
+		parts.append("DOWN")
+	if _activated:
+		parts.append("done")
+	elif activating:
+		parts.append("active")
+	_label.text = " ".join(parts)
+	_label.modulate = Color(0.7, 0.7, 0.7) if _activated else Color.WHITE
+	_apply_look()
+
+
+func _apply_look() -> void:
+	var base: Color = _colour.lerp(Color(0.35, 0.35, 0.35), 0.65) if _activated else _colour
+	_material.albedo_color = base
+	_material.emission_enabled = _selected
+	_material.emission = base.lerp(Color.WHITE, 0.6) if _selected else Color.BLACK
 	_material.emission_energy_multiplier = 0.35
 
 
@@ -93,6 +126,19 @@ func ray_hit_distance(origin: Vector3, direction: Vector3) -> float:
 			if Vector2(p.x - base.x, p.z - base.z).length() <= radius:
 				best = minf(best, t)
 	return best
+
+
+func _build_label() -> void:
+	_label = Label3D.new()
+	_label.name = "Status"
+	_label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+	_label.no_depth_test = true
+	_label.fixed_size = true
+	_label.pixel_size = 0.0012
+	_label.font_size = 26
+	_label.outline_size = 8
+	_label.position = Vector3(0.0, height / 2.0 + 0.5, 0.0)
+	add_child(_label)
 
 
 func _build_ring() -> void:
