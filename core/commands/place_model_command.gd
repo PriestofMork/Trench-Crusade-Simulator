@@ -1,0 +1,58 @@
+class_name PlaceModelCommand
+extends Command
+## Adds a model to the table. Rejected if its base would overlap another
+## model's cylinder or reach past the table edge. Touching is allowed.
+
+const EPSILON: float = 0.0001
+
+var player: int
+var position: Vector3
+var base_mm: int
+## Id of the placed model, set by apply().
+var placed_model_id: int = -1
+
+
+func _init(p_player: int, p_position: Vector3, p_base_mm: int) -> void:
+	player = p_player
+	position = p_position
+	base_mm = p_base_mm
+
+
+func validate(state: GameState) -> String:
+	if player != 0 and player != 1:
+		return "Player must be 0 or 1, got %d." % player
+	if not BaseSizes.is_known(base_mm):
+		return "Unknown base size: %d mm." % base_mm
+
+	var radius: float = BaseSizes.mm_to_inches(base_mm) / 2.0
+	if (
+		position.x - radius < -EPSILON
+		or position.z - radius < -EPSILON
+		or position.x + radius > state.table_width + EPSILON
+		or position.z + radius > state.table_depth + EPSILON
+		or position.y < -EPSILON
+	):
+		return "Base would lie outside the table."
+
+	var height: float = BaseSizes.height_inches(base_mm)
+	for other: ModelState in state.models:
+		if _cylinders_overlap(position, radius, height, other):
+			return "Base would overlap model %d." % other.id
+	return ""
+
+
+func apply(state: GameState) -> void:
+	placed_model_id = state.add_model(player, position, base_mm).id
+
+
+static func _cylinders_overlap(
+	pos: Vector3, radius: float, height: float, other: ModelState
+) -> bool:
+	var horizontal: float = Vector2(pos.x - other.position.x, pos.z - other.position.z).length()
+	if horizontal >= radius + other.base_radius_inches() - EPSILON:
+		return false
+	var vertical_apart: bool = (
+		pos.y + height <= other.position.y + EPSILON
+		or other.position.y + other.height_inches() <= pos.y + EPSILON
+	)
+	return not vertical_apart
