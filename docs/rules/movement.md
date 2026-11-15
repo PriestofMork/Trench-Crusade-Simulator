@@ -1,0 +1,60 @@
+# Movement
+
+## Move
+
+- The model moves up to its Movement characteristic in inches.
+- Climbing and jumping are done as part of a move and are paid for out of it.
+- A model may only come within 1" of an enemy model by charging.
+
+## Climb
+
+- The model's base must touch a sheer surface.
+- Make a success roll. On a success the model is placed at the top of the surface
+  with the centre of its base on the upper edge.
+- Cost: the vertical distance climbed, in inches of movement.
+
+## Jump over a gap
+
+- Declared as part of a move. The model's base must be at the ledge.
+- The gap may be no wider than half the model's Movement characteristic, and the
+  distance moved to the ledge plus the gap width may not exceed what the model can
+  move.
+- Make a risky success roll at the ledge.
+  - Success: the model is moved to the far side and may continue with any movement
+    it has left.
+  - Failure: the model falls, and its activation ends.
+
+## Dash
+
+- A risky success roll. On a success the model moves up to its Movement
+  characteristic again.
+
+## Charge
+
+- Target: an enemy model the charger can see, within 12".
+- The charger moves up to its Movement characteristic + d6 inches.
+- The path must be as straight as possible, but may bend to avoid things such as
+  dangerous terrain.
+- The charge ends when the charger's base touches the target's base.
+- **Interposing:** if the path would bring the charger within 1" of a different enemy
+  model, the charger must charge that model instead.
+- **Multi-charge:** after touching the target's base, the charger may spend remaining
+  movement sliding around that base while staying in contact. If that brings it
+  within 1" of further enemy models, it may stop there and counts as having charged
+  every enemy model it is now within 1" of.
+
+## Melee and Retreat
+
+- A model is in melee while within 1" of an enemy model.
+- Retreat is a move action that lets the model leave the 1" zone. Before it leaves,
+  the enemy makes a melee attack action against it.
+
+## Open questions
+
+1. Failed climb: does the model stay where it is? Does its activation end?
+2. Falling: not written yet (damage, where the model lands, Down or not).
+3. Climbing down and jumping down from a height.
+4. Charge: what happens if the rolled distance does not reach the target?
+5. Retreat: if several enemies are within 1", does each get an attack?
+6. Does a model in melee have any way to move other than Retreat?
+7. Difficult and dangerous terrain.

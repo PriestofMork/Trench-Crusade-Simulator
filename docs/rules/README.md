@@ -9,19 +9,20 @@ rulebook, these files win. Do not paste official rules text here: the repository
 
 - State the rule so that a program could follow it: no "agree with your opponent".
 - Give numbers and units (inches, dice, markers).
+- Mark anything not confirmed by the project owner as "assumed".
 - End with an "Open questions" list for anything undecided. Code is only written for
   rules with no open question attached.
 
 ## Topics
 
-| File | Status |
-|---|---|
-| `line-of-sight.md` | Draft, open questions |
-| `turn-structure.md` | Not written |
-| `actions-and-rolls.md` | Not written |
-| `movement.md` | Not written |
-| `shooting.md` | Not written |
-| `melee.md` | Not written |
-| `injuries.md` | Not written |
-| `markers.md` (blood, blessing) | Not written |
-| `terrain.md` | Not written |
+| File | Covers | Status |
+|---|---|---|
+| `models.md` | profile, battlekit, abilities | Structure confirmed |
+| `rolls.md` | success rolls, plus/minus dice, risky | Mostly confirmed |
+| `turn-structure.md` | turns, activation, action list | Mostly confirmed |
+| `movement.md` | move, climb, jump, dash, charge, retreat | Open questions |
+| `attacks.md` | ranged, melee, injury, bloodbath | Open questions |
+| `markers.md` | blood, blessing, Down | Open questions |
+| `morale.md` | morale tests | Open questions |
+| `line-of-sight.md` | cylinders, visibility | Cover deferred |
+| terrain, scenarios, falling | | Not written |
