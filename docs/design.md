@@ -39,7 +39,8 @@ Two layers with a one-way dependency: `game/` knows `core/`, never the reverse.
 | Topic | Decision |
 |---|---|
 | Model shape for rules | Every model is a cylinder defined by its base diameter and a height. The visual mesh is never used for rules. |
-| Cylinder height | One fixed height per base size. |
+| Cylinder height | One fixed height per base size, from a single tunable table (values in `docs/rules/line-of-sight.md`). |
+| Models and sight | Other models block line of sight, friendly and enemy alike. |
 | Line of sight | Any point of the attacker's cylinder to any point of the target's cylinder, against simplified terrain volumes. Cover is deferred. See `docs/rules/line-of-sight.md`. |
 | Terrain collision | Hand-blocked simple shapes (boxes, ramps), separate from the visual mesh. Used for both movement and line of sight. |
 | Movement | Free, not grid-based. Select a model, see reachable distance, click to move. |
@@ -52,7 +53,6 @@ Two layers with a one-way dependency: `game/` knows `core/`, never the reverse.
 
 ## Open questions
 
-- Cylinder height values per base size.
 - Cover mechanics (deferred).
 - Table size and whether it varies per scenario.
 - Order of the blood and blessing prompts when both players can spend on one roll.

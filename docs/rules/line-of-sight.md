@@ -11,7 +11,24 @@ a raised sword or a banner never gives or blocks line of sight.
 
 - A model's volume is a vertical cylinder standing on its base.
 - Diameter = the model's base size.
-- Height = one fixed value per base size. The table of values is still to be set.
+- Height = one fixed value per base size:
+
+| Base | Height |
+|---|---|
+| 25 mm | 1.7" |
+| 32 mm | 1.9" |
+| 40 mm | 2.2" |
+| 50 mm | 2.6" |
+| 60 mm | 3.0" |
+
+These values are first estimates and will be tuned. They must live in one data table,
+never be hard-coded where they are used.
+
+## Other models
+
+- Models block line of sight: the cylinder of any model other than the attacker and
+  the target blocks sight lines exactly like blocking terrain. This applies to
+  friendly and enemy models alike.
 
 ## Visibility
 
@@ -25,9 +42,6 @@ a raised sword or a banner never gives or blocks line of sight.
 
 ## Open questions
 
-1. **Height values.** The actual height in inches for each base size.
-2. **Cover.** Deferred on purpose; to be discussed later. Visibility (yes/no) can be
+1. **Cover.** Deferred on purpose; to be discussed later. Visibility (yes/no) can be
    implemented without it.
-3. **Other models.** Do models block line of sight to models behind them, give cover,
-   or neither?
-4. **Height advantage.** Any effect from shooting from higher ground?
+2. **Height advantage.** Any effect from shooting from higher ground?

@@ -17,8 +17,9 @@ foundation every later task builds on.
 
 **Core (`core/`)**
 - `GameState`: holds a list of models. Each model has an id, owning player (0 or 1),
-  position (`Vector3`, inches), base diameter (stored in mm, exposed in inches) and
-  cylinder height (inches).
+  position (`Vector3`, inches) and base diameter (stored in mm, exposed in inches).
+  Cylinder height (inches) is looked up from the base size in one table in `core/`,
+  using the values in `docs/rules/line-of-sight.md`. An unknown base size is an error.
 - A command base class with `validate(state)` and `apply(state)`, and one concrete
   command: `PlaceModelCommand`, which adds a model at a position. It is rejected if the
   new base would overlap an existing base or lie outside the table.
@@ -39,6 +40,7 @@ foundation every later task builds on.
 - Dice: the same seed gives the same sequence; rolls stay within 1 to 6.
 - `PlaceModelCommand`: accepts a valid placement; rejects overlap; rejects off-table.
 - mm-to-inch conversion of base sizes.
+- Height lookup: each of the five base sizes returns its height; an unknown size fails.
 
 ## Done when
 
