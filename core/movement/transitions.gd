@@ -4,10 +4,15 @@ extends RefCounted
 ## See docs/rules/terrain.md and docs/rules/movement.md.
 ##
 ## Every change of floor is one of the kinds below. Each kind says whether it
-## needs a roll and whether the vertical distance is paid in movement. The
-## search and the move command only use kinds that need no roll; brief 006
-## (height, part 2) adds the risky ones by letting them through with their
-## roll, without changing how they are found.
+## needs a roll and whether the vertical distance is paid in movement. Where
+## several kinds can cross the same wall, the one with the fewest rolls is
+## taken, then the cheapest (ruling 8 of brief 006), unless a move asks for a
+## particular one (climbing down a sheer surface instead of dropping).
+##
+## Rolls (brief 006): a sheer climb up or down and a gap jump are risky success
+## rolls made before the crossing; a drop of the free drop height or more is
+## an injury roll after landing (+1 die per full 3"), and so is landing from a
+## gap jump onto a far side that much lower.
 ##
 ## Walls are crossed at a touch point: going up, the base walks until it touches
 ## the wall and arrives on top with its centre directly above that point;
@@ -35,9 +40,9 @@ enum Kind {
 	LADDER_DOWN,
 	## Down a sheer surface with a risky climb roll (part 2).
 	SHEER_CLIMB_DOWN,
-	## Down a drop of the free drop height or more: falling (part 2).
+	## Down a drop of the free drop height or more: counts as falling.
 	DROP,
-	## Across a gap with no floor (part 2). Nothing produces it yet.
+	## Across a gap with no floor between two ledges.
 	GAP_JUMP,
 }
 
@@ -64,9 +69,57 @@ static func needs_roll(kind: Kind) -> bool:
 	return kind != Kind.NONE and RULES[kind]["roll"]
 
 
-## Whether a move may use this kind in this brief: it exists and needs no roll.
+## Whether this kind can be taken with no roll at all.
 static func allowed_without_roll(kind: Kind) -> bool:
 	return kind != Kind.NONE and not RULES[kind]["roll"]
+
+
+## Whether the kind climbs a wall (so the wall must reach down to the lower floor).
+static func climbs(kind: Kind) -> bool:
+	return kind in [Kind.OPEN_CLIMB, Kind.LADDER_UP, Kind.SHEER_CLIMB_UP, Kind.LADDER_DOWN, Kind.SHEER_CLIMB_DOWN]
+
+
+## Whether the kind needs a risky success roll before it is made.
+static func risky_before(kind: Kind) -> bool:
+	return kind in [Kind.SHEER_CLIMB_UP, Kind.SHEER_CLIMB_DOWN, Kind.GAP_JUMP]
+
+
+## Whether a drop of `drop` inches counts as falling (injury roll).
+static func is_fall(drop: float) -> bool:
+	return drop >= TerrainRules.FREE_DROP_HEIGHT - HEIGHT_SLACK
+
+
+## How many rolls crossing this way makes. `drop` is how far the model comes
+## down (for a drop, or a gap jump to a lower far side), else 0.
+static func roll_count(kind: Kind, drop: float = 0.0) -> int:
+	match kind:
+		Kind.SHEER_CLIMB_UP, Kind.SHEER_CLIMB_DOWN:
+			return 1
+		Kind.DROP:
+			return 1
+		Kind.GAP_JUMP:
+			return 2 if is_fall(drop) else 1
+	return 0
+
+
+## Of `options` for one wall, the kind a move takes: `preferred` if it is one
+## of them, else the fewest rolls, then the cheapest. Kinds that need a roll
+## are left out unless `allow_rolls`. NONE if nothing is left.
+static func pick_wall_kind(
+	options: Array[Kind], going_up: bool, wall_height: float, allow_rolls: bool = true, preferred: Kind = Kind.NONE
+) -> Kind:
+	if preferred != Kind.NONE and options.has(preferred) and (allow_rolls or not needs_roll(preferred)):
+		return preferred
+	var best: Kind = Kind.NONE
+	var best_key: Vector2 = Vector2(INF, INF)
+	for kind: Kind in options:
+		if needs_roll(kind) and not allow_rolls:
+			continue
+		var key: Vector2 = Vector2(roll_count(kind, 0.0 if going_up else wall_height), wall_cost(kind, 0.0, wall_height))
+		if key < best_key:
+			best = kind
+			best_key = key
+	return best
 
 
 ## Every way across a wall, cheapest first. `wall_height` is the vertical
@@ -99,16 +152,26 @@ static func wall_options(
 static func roll_free_wall_kind(
 	going_up: bool, wall_height: float, tag: TerrainPiece.Tag, low_obstacle: bool
 ) -> Kind:
-	var best: Kind = Kind.NONE
-	var best_cost: float = INF
-	for kind: Kind in wall_options(going_up, wall_height, tag, low_obstacle):
-		if not allowed_without_roll(kind):
-			continue
-		var cost: float = wall_cost(kind, 0.0, wall_height)
-		if cost < best_cost:
-			best = kind
-			best_cost = cost
-	return best
+	return pick_wall_kind(wall_options(going_up, wall_height, tag, low_obstacle), going_up, wall_height, false)
+
+
+## The way across a wall a move takes when rolls are allowed (see pick_wall_kind()).
+static func wall_kind(
+	going_up: bool, wall_height: float, tag: TerrainPiece.Tag, low_obstacle: bool, preferred: Kind = Kind.NONE
+) -> Kind:
+	return pick_wall_kind(wall_options(going_up, wall_height, tag, low_obstacle), going_up, wall_height, true, preferred)
+
+
+## A short name for showing a crossing that needs a roll.
+static func roll_name(kind: Kind) -> String:
+	match kind:
+		Kind.SHEER_CLIMB_UP, Kind.SHEER_CLIMB_DOWN:
+			return "Climb"
+		Kind.GAP_JUMP:
+			return "Jump"
+		Kind.DROP:
+			return "Drop"
+	return ""
 
 
 ## Movement a wall crossing costs: the horizontal distance moved, plus the

@@ -17,7 +17,16 @@ extends RefCounted
 ##   costs its length along the surface (3D); or
 ## - a wall crossing: from a point where the base touches a wall to the point
 ##   on top directly above the touch point (going up), or the reverse (going
-##   down). It costs what Transitions says for that wall.
+##   down). It costs what Transitions says for that wall; or
+## - a gap jump: from a point on the ledge of one surface (the base centre on
+##   its edge) straight across to the ledge of another, with no floor between
+##   them at the level of the lower ledge. It costs the gap's width, plus the
+##   rise if the far side is higher, and that total must be within the jump
+##   limit (ruling 5 of brief 006: half the model's Movement, halved again
+##   after standing up).
+## Crossings that need a roll (Transitions) are allowed unless allow_rolls is
+## false; where a segment can be read several ways, the one with the fewest
+## rolls is taken, then the cheapest.
 ## Changing between two surfaces at the same height needs no segment of its
 ## own: one walk ends on the first and the next starts on the second.
 ##
@@ -27,7 +36,7 @@ extends RefCounted
 ## Touching is allowed; overlapping is not. Exactly 1" from an enemy is allowed.
 
 enum Result {
-	OK, OFF_TABLE, TERRAIN, MODEL, ENEMY, NO_FLOOR, NOT_SUPPORTED, HEADROOM, NEEDS_ROLL, NO_WAY
+	OK, OFF_TABLE, TERRAIN, MODEL, ENEMY, NO_FLOOR, NOT_SUPPORTED, HEADROOM, NEEDS_ROLL, NO_WAY, TOO_WIDE
 }
 
 const EPSILON: float = 0.0001
@@ -35,6 +44,11 @@ const EPSILON: float = 0.0001
 const ENEMY_DISTANCE_INCHES: float = 1.0
 ## How exactly a wall crossing must start at the touch point and end above it.
 const TOUCH_SLACK: float = 0.002
+## A jump must cross at least this much gap (less is a seam between floors).
+const MIN_GAP: float = 0.05
+## How far from where a model falls or fails the closest place to stop is looked for.
+const STOP_SEARCH_DISTANCE: float = 12.0
+const STOP_RING_STEP: float = 0.05
 
 ## Radius of the moving model's base, inches.
 var radius: float
@@ -47,9 +61,20 @@ var start_surfaces: PackedInt32Array
 ## Pieces the model starts on (-1 for the table), for the low obstacle surcharge.
 var start_piece_ids: PackedInt32Array = PackedInt32Array()
 
-## Why the last check failed, and the kind of the last segment that passed.
+## Whether crossings that need a roll may be used.
+var allow_rolls: bool = true
+## The widest gap (plus any rise) the model may jump, inches.
+var jump_limit: float = 0.0
+
+## Why the last check failed, and the kind of the last segment that passed,
+## with how far it came down or went up and, for a jump, the gap.
 var last_result: Result = Result.OK
 var last_kind: Transitions.Kind = Transitions.Kind.NONE
+var last_drop: float = 0.0
+var last_rise: float = 0.0
+var last_gap: float = 0.0
+var last_fall_point: Vector3 = Vector3.ZERO
+var last_rolls: int = 0
 
 ## Per surface, the terrain in the way of this model's cylinder when standing.
 var _headroom: Array = []
@@ -68,6 +93,7 @@ func _init(state: GameState, model: ModelState, p_field: HeightField = null) -> 
 	model_height = model.height_inches()
 	field = p_field if p_field != null else state.height_field()
 	_headroom = field.headroom_obstacles(model_height)
+	jump_limit = TurnFlow.movement_budget(state, model) * 0.5
 	start = model.position
 	start_surfaces = surfaces_at(start)
 	for s: int in start_surfaces:
@@ -157,10 +183,10 @@ func walk_length(a: Vector2, b: Vector2, surface: int) -> float:
 
 
 ## Cost of crossing a wall from u on surface su to v on surface sv, or INF if
-## that is not a legal roll-free crossing (last_result says why). See the class
-## notes: one end is where the base touches the wall, the other is on top,
-## directly above the touch point.
-func wall_cost(u: Vector2, su: int, v: Vector2, sv: int) -> float:
+## that is not a legal crossing (last_result says why). See the class notes:
+## one end is where the base touches the wall, the other is on top, directly
+## above the touch point. `preferred` asks for one kind where there is a choice.
+func wall_cost(u: Vector2, su: int, v: Vector2, sv: int, preferred: Transitions.Kind = Transitions.Kind.NONE) -> float:
 	last_kind = Transitions.Kind.NONE
 	var yu: float = field.surface_height(su, u)
 	var yv: float = field.surface_height(sv, v)
@@ -187,22 +213,25 @@ func wall_cost(u: Vector2, su: int, v: Vector2, sv: int) -> float:
 		or shape.signed_distance(high) > HeightField.EDGE_SLACK
 	):
 		return INF
-	# The wall reaches down to the low floor.
-	if piece.base_height > low_y + HeightField.TOLERANCE:
-		return INF
 	# Going down lands on the first floor beneath.
 	if not going_up:
 		for s: int in field.surfaces_at(low):
 			var y: float = field.surface_height(s, low)
 			if y > low_y + HeightField.TOLERANCE and y < high_y - HeightField.TOLERANCE:
 				return INF
-	var kind: Transitions.Kind = Transitions.roll_free_wall_kind(
+	var options: Array[Transitions.Kind] = Transitions.wall_options(
 		going_up, wall_height, piece.tag, going_up and field.is_low_obstacle(high_surface)
 	)
+	# A climb needs the wall to reach down to the low floor; dropping or
+	# hopping off anything is fine.
+	if piece.base_height > low_y + HeightField.TOLERANCE:
+		var off: Array[Transitions.Kind] = []
+		for option: Transitions.Kind in options:
+			if not Transitions.climbs(option):
+				off.append(option)
+		options = off
+	var kind: Transitions.Kind = Transitions.pick_wall_kind(options, going_up, wall_height, allow_rolls, preferred)
 	if kind == Transitions.Kind.NONE:
-		var options: Array[Transitions.Kind] = Transitions.wall_options(
-			going_up, wall_height, piece.tag, going_up and field.is_low_obstacle(high_surface)
-		)
 		last_result = Result.NEEDS_ROLL if not options.is_empty() else Result.NO_WAY
 		return INF
 	var result: Result = passing_result(low, low_surface)
@@ -215,46 +244,220 @@ func wall_cost(u: Vector2, su: int, v: Vector2, sv: int) -> float:
 		return INF
 	last_result = Result.OK
 	last_kind = kind
+	last_drop = 0.0 if going_up else wall_height
+	last_rise = wall_height if going_up else 0.0
+	last_gap = 0.0
+	last_rolls = Transitions.roll_count(kind, last_drop)
 	return Transitions.wall_cost(kind, horizontal, wall_height)
 
 
+## Cost of a gap jump from u on the ledge of su straight across to v on the
+## ledge of sv, or INF if that is not a legal jump (last_result says why;
+## TOO_WIDE if only the jump limit is in the way). See the class notes.
+func jump_cost(u: Vector2, su: int, v: Vector2, sv: int) -> float:
+	last_kind = Transitions.Kind.NONE
+	last_result = Result.NO_WAY
+	if su == sv or su == HeightField.TABLE or sv == HeightField.TABLE or field.same_level(su, sv):
+		return INF
+	var a: HeightField.Surface = field.surfaces[su]
+	var b: HeightField.Surface = field.surfaces[sv]
+	# Both ends at their ledges.
+	if absf(a.shape.signed_distance(u)) > TOUCH_SLACK or absf(b.shape.signed_distance(v)) > TOUCH_SLACK:
+		return INF
+	var width: float = u.distance_to(v)
+	if width < MIN_GAP:
+		return INF
+	var yu: float = field.surface_height(su, u)
+	var yv: float = field.surface_height(sv, v)
+	var low_ledge: float = minf(yu, yv)
+	var high_ledge: float = maxf(yu, yv)
+	if not _gap_is_open(u, v, su, sv, low_ledge, high_ledge):
+		return INF
+	var rise: float = maxf(yv - yu, 0.0)
+	if width + rise > jump_limit + EPSILON:
+		last_result = Result.TOO_WIDE
+		return INF
+	var result: Result = passing_result(u, su)
+	if result == Result.OK:
+		result = passing_result(v, sv)
+	if result == Result.OK and not _enemies_clear(u, v, low_ledge, high_ledge):
+		result = Result.ENEMY
+	if result != Result.OK:
+		last_result = result
+		return INF
+	if not allow_rolls:
+		last_result = Result.NEEDS_ROLL
+		return INF
+	last_result = Result.OK
+	last_kind = Transitions.Kind.GAP_JUMP
+	last_drop = maxf(yu - yv, 0.0)
+	last_rise = rise
+	last_gap = width
+	var middle: Vector2 = (u + v) * 0.5
+	last_fall_point = Vector3(middle.x, yu, middle.y)
+	last_rolls = Transitions.roll_count(Transitions.Kind.GAP_JUMP, last_drop)
+	return width + rise
+
+
+## Whether the straight way from u (on su) to v (on sv) runs over neither
+## ledge in between, every floor under it there is lower than the lower ledge,
+## and no terrain rises into the jump. Only the centre line is checked.
+func _gap_is_open(u: Vector2, v: Vector2, su: int, sv: int, low_ledge: float, high_ledge: float) -> bool:
+	var length: float = u.distance_to(v)
+	var slack: float = (TOUCH_SLACK + HeightField.EDGE_SLACK) / length
+	for s: HeightField.Surface in field.surfaces:
+		var span: Vector2 = PlanarGeometry.segment_polygon_clip(u, v, s.polygon)
+		var t0: float = maxf(span.x, slack)
+		var t1: float = minf(span.y, 1.0 - slack)
+		if t0 >= t1:
+			continue
+		if s.index == su or s.index == sv:
+			return false
+		var top: float = maxf(s.height_at(u.lerp(v, t0)), s.height_at(u.lerp(v, t1)))
+		if top > low_ledge - HeightField.TOLERANCE:
+			return false
+	for solid: HeightField.Solid in field.solids:
+		var span: Vector2 = PlanarGeometry.segment_polygon_clip(u, v, solid.polygon)
+		var t0: float = maxf(span.x, slack)
+		var t1: float = minf(span.y, 1.0 - slack)
+		if t0 >= t1:
+			continue
+		var top: float = maxf(solid.top_at(u.lerp(v, t0)), solid.top_at(u.lerp(v, t1)))
+		if top > low_ledge - HeightField.TOLERANCE and solid.bottom < high_ledge + model_height:
+			last_result = Result.TERRAIN
+			return false
+	return true
+
+
 ## Cost of one path segment between two 3D points, whichever legal way it is
-## taken (the cheapest if there are several), or INF if there is none;
-## last_result then says why, last_kind says how it was taken otherwise.
-func segment_cost(u: Vector3, v: Vector3) -> float:
+## taken (the fewest rolls, then the cheapest, if there are several; or the
+## `preferred` kind if it is one of them), or INF if there is none;
+## last_result then says why, last_kind (and last_drop, last_rise, last_gap,
+## last_fall_point, last_rolls) say how it was taken otherwise.
+func segment_cost(u: Vector3, v: Vector3, preferred: Transitions.Kind = Transitions.Kind.NONE) -> float:
 	var su_list: PackedInt32Array = surfaces_at(u)
 	var sv_list: PackedInt32Array = surfaces_at(v)
 	var u2: Vector2 = Vector2(u.x, u.z)
 	var v2: Vector2 = Vector2(v.x, v.z)
 	var best: float = INF
-	var best_kind: Transitions.Kind = Transitions.Kind.NONE
+	var best_key: Vector2 = Vector2(INF, INF)
+	var best_reading: Array = []
 	var reason: Result = Result.NO_FLOOR
 	for s: int in _walk_surfaces(su_list, sv_list):
 		var walk: Result = level_walk_result(u2, v2, s)
 		if walk == Result.OK:
 			var length: float = walk_length(u2, v2, s)
-			if length < best:
+			if Vector2(0, length) < best_key:
 				best = length
-				best_kind = Transitions.Kind.WALK
+				best_key = Vector2(0, length)
+				best_reading = [Transitions.Kind.WALK, maxf(u.y - v.y, 0.0), maxf(v.y - u.y, 0.0), 0.0, Vector3.ZERO, 0]
 		else:
 			reason = walk
 	for su: int in su_list:
 		for sv: int in sv_list:
 			if su == sv:
 				continue
-			var cost: float = wall_cost(u2, su, v2, sv)
-			if cost < best:
-				best = cost
-				best_kind = last_kind
-			elif cost == INF and (reason == Result.NO_FLOOR or last_result == Result.NEEDS_ROLL):
-				reason = last_result
+			for jump: bool in [false, true]:
+				var cost: float = jump_cost(u2, su, v2, sv) if jump else wall_cost(u2, su, v2, sv, preferred)
+				if cost < INF:
+					var key: Vector2 = Vector2(last_rolls, cost)
+					if preferred != Transitions.Kind.NONE and last_kind == preferred:
+						key = Vector2(-1, cost)
+					if key < best_key:
+						best = cost
+						best_key = key
+						best_reading = [last_kind, last_drop, last_rise, last_gap, last_fall_point, last_rolls]
+				elif _more_telling(last_result, reason):
+					reason = last_result
 	if best < INF:
 		last_result = Result.OK
-		last_kind = best_kind
+		last_kind = best_reading[0]
+		last_drop = best_reading[1]
+		last_rise = best_reading[2]
+		last_gap = best_reading[3]
+		last_fall_point = best_reading[4]
+		last_rolls = best_reading[5]
 	else:
 		last_result = reason
 		last_kind = Transitions.Kind.NONE
+		last_rolls = 0
 	return best
+
+
+## Whether `candidate` says more about why a segment is not legal than `current`.
+static func _more_telling(candidate: Result, current: Result) -> bool:
+	if current == Result.NO_FLOOR:
+		return candidate != Result.NO_WAY
+	if candidate == Result.NEEDS_ROLL:
+		return true
+	return candidate == Result.TOO_WIDE and current != Result.NEEDS_ROLL
+
+
+## The segments of the path from `from` through `points`, as taken (see
+## segment_cost()), or an empty list if a segment is not legal (last_result
+## says why). `preferred` gives a kind per segment (NONE: whichever is best).
+func segments_for(from: Vector3, points: Array[Vector3], preferred: Array = []) -> Array[MoveSegment]:
+	var result: Array[MoveSegment] = []
+	var previous: Vector3 = from
+	for i: int in points.size():
+		var wanted: Transitions.Kind = Transitions.Kind.NONE
+		if i < preferred.size():
+			wanted = preferred[i]
+		var cost: float = segment_cost(previous, points[i], wanted)
+		if cost == INF:
+			return []
+		var segment: MoveSegment = MoveSegment.new()
+		segment.from = previous
+		segment.to = points[i]
+		segment.kind = last_kind
+		segment.cost = cost
+		segment.drop = last_drop
+		segment.rise = last_rise
+		segment.gap_width = last_gap
+		segment.fall_point = last_fall_point
+		result.append(segment)
+		previous = points[i]
+	last_result = Result.OK
+	return result
+
+
+## The highest floor at p lower than `y`, or -1 if there is none.
+func surface_below(p: Vector2, y: float) -> int:
+	var best: int = -1
+	var best_y: float = -INF
+	for s: int in field.surfaces_at(p):
+		var h: float = field.surface_height(s, p)
+		if h < y - HeightField.TOLERANCE and h > best_y:
+			best = s
+			best_y = h
+	return best
+
+
+## The closest position to p on `surface` (or the floors of its level) where
+## the model may stop, or null if there is none within STOP_SEARCH_DISTANCE.
+## Searched on rings of growing radius, so it is within a ring step of exact.
+func closest_stop(p: Vector2, surface: int) -> Variant:
+	var surfaces: PackedInt32Array = field.level_members(surface)
+	var found: Variant = _stop_on(p, surfaces)
+	if found != null:
+		return found
+	var r: float = STOP_RING_STEP
+	while r <= STOP_SEARCH_DISTANCE + EPSILON:
+		var count: int = maxi(8, ceili(TAU * r / STOP_RING_STEP))
+		for k: int in count:
+			var angle: float = TAU * k / count
+			var at: Variant = _stop_on(p + Vector2(cos(angle), sin(angle)) * r, surfaces)
+			if at != null:
+				return at
+		r += STOP_RING_STEP
+	return null
+
+
+func _stop_on(q: Vector2, surfaces: PackedInt32Array) -> Variant:
+	for s: int in surfaces:
+		if field.is_floor(q, s) and point_result(q, s) == Result.OK:
+			return on_surface(q, s)
+	return null
 
 
 ## Like segment_cost(), but only as a walk on one surface (INF otherwise).
@@ -383,9 +586,11 @@ static func describe(result: Result) -> String:
 		Result.HEADROOM:
 			return "Cannot stop there: not enough headroom for the model."
 		Result.NEEDS_ROLL:
-			return "That needs a roll (a sheer climb, a jump or a drop), which is not available yet."
+			return "That needs a roll (a sheer climb, a jump or a drop)."
 		Result.NO_WAY:
 			return "Blocked: there is no way from one floor to the other there."
+		Result.TOO_WIDE:
+			return "Too wide to jump: a gap (plus any rise) may be at most half the model's Movement."
 	return "Illegal move."
 
 

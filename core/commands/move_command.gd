@@ -15,6 +15,11 @@ var cost: float = INF
 var _path: MovePath = null
 
 
+## The path as the last validate() checked it, or null.
+func path() -> MovePath:
+	return _path
+
+
 func _init(p_player: int, p_model_id: int, p_waypoints: Array[Vector3]) -> void:
 	player = p_player
 	model_id = p_model_id

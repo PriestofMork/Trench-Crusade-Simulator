@@ -158,6 +158,7 @@ func _init(state: GameState, p_model_id: int, p_budget: float = -1.0, p_cell_siz
 	budget = p_budget if p_budget >= 0.0 else model.movement
 	_start_2d = Vector2(start.x, start.z)
 	legality = MoveLegality.new(state, model)
+	legality.allow_rolls = false
 	field = legality.field
 	_radius = legality.radius
 	_limit = budget + MARGIN_CELLS * cell_size

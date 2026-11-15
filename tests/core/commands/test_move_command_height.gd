@@ -33,6 +33,21 @@ func _cost(id: int, path: Array[Vector3]) -> float:
 	return command.cost
 
 
+## The rolls the path makes, after checking it is legal.
+func _rolls(id: int, path: Array[Vector3]) -> Array[Dictionary]:
+	var command: MoveCommand = TurnHelper.move(state, id, path)
+	assert_eq(command.validate(state), "", "path %s" % str(path))
+	return command.path().rolls()
+
+
+## The kinds of the roll points along the path ("climb", "jump", "injury").
+func _roll_kinds(id: int, path: Array[Vector3]) -> Array[StringName]:
+	var kinds: Array[StringName] = []
+	for roll: Dictionary in _rolls(id, path):
+		kinds.append(roll["kind"])
+	return kinds
+
+
 func _rejection(id: int, path: Array[Vector3]) -> MovePath.Rejection:
 	var command: MoveCommand = TurnHelper.move(state, id, path)
 	assert_ne(command.validate(state), "", "path %s should be rejected" % str(path))
@@ -80,17 +95,19 @@ func test_three_inch_boundary_going_up() -> void:
 	state = GameState.new(1)
 	_piece(Vector2(12, 12), Vector3(4, 3.05, 4))
 	id = _place(Vector3(12, 0, 16), 32, 8.0)
-	assert_eq(_rejection(id, _climb_path(3.05)), MovePath.Rejection.NEEDS_ROLL)
+	assert_eq(_roll_kinds(id, _climb_path(3.05)), [&"climb"] as Array[StringName], "higher is a sheer climb")
+	assert_almost_eq(_cost(id, _climb_path(3.05)), 2.0 + 3.05 + 1.0, 0.0001, "paying its height")
 
 
 func test_sheer_needs_a_roll_ladder_never() -> void:
 	_piece(Vector2(12, 12), Vector3(4, 2, 4), TerrainPiece.Tag.SHEER)
 	var id: int = _place(Vector3(12, 0, 16))
-	assert_eq(_rejection(id, _climb_path(2.0)), MovePath.Rejection.NEEDS_ROLL)
+	assert_eq(_roll_kinds(id, _climb_path(2.0)), [&"climb"] as Array[StringName], "sheer at any height")
 	state = GameState.new(1)
 	_piece(Vector2(12, 12), Vector3(4, 5, 4), TerrainPiece.Tag.LADDER)
 	id = _place(Vector3(12, 0, 16), 32, 10.0)
 	assert_almost_eq(_cost(id, _climb_path(5.0)), 2.0 + 5.0 + 1.0, 0.0001)
+	assert_eq(_roll_kinds(id, _climb_path(5.0)), [] as Array[StringName], "a ladder never needs a roll")
 
 
 func test_impassable_cannot_be_climbed() -> void:
@@ -117,7 +134,8 @@ func test_drops_below_three_inches_are_free_and_from_three_need_a_roll() -> void
 	_piece(Vector2(12, 12), Vector3(4, 3, 4))
 	id = _place(Vector3(12, 3, 13))
 	down = [Vector3(12, 3, 14), Vector3(12, 0, 14 + R32), Vector3(12, 0, 16)]
-	assert_eq(_rejection(id, down), MovePath.Rejection.NEEDS_ROLL)
+	assert_eq(_roll_kinds(id, down), [&"injury"] as Array[StringName], "3\" counts as falling")
+	assert_almost_eq(_cost(id, down), 1.0 + R32 + (2.0 - R32), 0.0001, "a drop costs no movement")
 
 
 func test_ladder_down_pays_the_height() -> void:
