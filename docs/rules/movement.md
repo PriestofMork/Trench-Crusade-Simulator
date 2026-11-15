@@ -91,7 +91,6 @@ These need no climb and are moved over normally:
 
 1. Does a model in melee have any way to move other than Retreat? (Assumed: no.)
 2. A model that goes Down from a fall mid-move: its move ends there. (Assumed.)
-3. Slopes and ramps: is the cost the distance along the surface, or only the
-   horizontal distance? (Assumed: along the surface.)
-4. Is there a slope too steep to walk, which must be climbed instead?
-5. Difficult and dangerous terrain.
+3. Difficult and dangerous terrain.
+
+Slopes, steps and what counts as a sheer surface are defined in `terrain.md`.

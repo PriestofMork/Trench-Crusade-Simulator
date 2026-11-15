@@ -25,4 +25,5 @@ rulebook, these files win. Do not paste official rules text here: the repository
 | `markers.md` | blood, blessing, Down | Open questions |
 | `morale.md` | morale tests | Open questions |
 | `line-of-sight.md` | cylinders, visibility | Cover deferred |
-| terrain, scenarios, falling | | Not written |
+| `terrain.md` | steps, slopes, trench walls, map marking | Marking approach proposed |
+| scenarios | | Not written |

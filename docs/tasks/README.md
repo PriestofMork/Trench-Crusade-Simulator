@@ -21,16 +21,15 @@ Open a new session in this folder and say:
 |---|---|
 | `001-project-skeleton.md` | Done |
 | `002-select-and-move.md` | Done |
-| `003-indicator-and-friendly-models.md` | Ready |
+| `003-indicator-and-friendly-models.md` | Done |
+| `004-height-part-1.md` | Ready |
 
 ## Planned next (not yet written)
 
-- 004: height, part 1: layered height field, slopes, ramps, platforms and open-terrain
-  steps; models stand at the right height; reach field over floors (no rolls yet)
 - 005: turns and activations, the roll pipeline with a first dice tray, and Dash as
   the first risky roll
 - 006: height, part 2: climbing, jumping gaps, jumping down and falling, with the
-  orange "needs a risky roll" area in the indicator
+  orange "needs a risky roll" area in the indicator, and ladder and stairs links
 - 007: charge, the 1" melee zone and retreat (free attacks stubbed until attacks exist)
 - 008: line of sight between cylinders
 - 009: ranged and melee attacks, injury rolls, markers and their prompts
