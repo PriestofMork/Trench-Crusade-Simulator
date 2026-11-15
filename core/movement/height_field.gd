@@ -53,6 +53,8 @@ class Surface:
 	var slope_degrees: float
 	var bounds_min: Vector2
 	var bounds_max: Vector2
+	## Height paid to stop on it if it is a low obstacle, else 0.
+	var low_obstacle_height: float = 0.0
 
 	func height_at(p: Vector2) -> float:
 		return height_at_origin + gradient.dot(p)
@@ -165,6 +167,7 @@ func _init(state: GameState) -> void:
 		surfaces.append(surface)
 	for surface: Surface in surfaces:
 		_passing.append(_obstacles_for(surface, TOLERANCE))
+		surface.low_obstacle_height = _low_obstacle_height(surface)
 	_build_cells()
 
 
@@ -179,6 +182,20 @@ func surface_height(surface: int, p: Vector2) -> float:
 ## Piece id of a surface, -1 for the tabletop.
 func surface_piece_id(surface: int) -> int:
 	return surfaces[surface].piece_id()
+
+
+## Whether the surface is the top of a low obstacle.
+func is_low_obstacle(surface: int) -> bool:
+	return surfaces[surface].low_obstacle_height > 0.0
+
+
+## What a move ending on `surface` pays on top of its path for stopping on a
+## low obstacle: its height, unless the move started on that same piece.
+func stop_surcharge(surface: int, start_piece_ids: PackedInt32Array) -> float:
+	var s: Surface = surfaces[surface]
+	if s.low_obstacle_height <= 0.0 or start_piece_ids.has(s.piece_id()):
+		return 0.0
+	return s.low_obstacle_height
 
 
 ## The surfaces that are a floor at p: p is over the surface's footprint and
@@ -366,6 +383,28 @@ func _obstacles_for(surface: Surface, layer: float) -> Array[Obstacle]:
 			obstacle.exempt_offset = top_offset
 		result.append(obstacle)
 	return result
+
+
+## A low obstacle is a box no higher than the low obstacle height standing on
+## a floor (the table or the top of another piece), so a thin floating deck is
+## not one. Returns its height, or 0.
+func _low_obstacle_height(surface: Surface) -> float:
+	var piece: TerrainPiece = surface.piece
+	if piece == null or piece.shape != TerrainPiece.Shape.BOX:
+		return 0.0
+	if piece.height > TerrainRules.LOW_OBSTACLE_HEIGHT + Transitions.HEIGHT_SLACK:
+		return 0.0
+	if piece.base_height <= TOLERANCE:
+		return piece.height
+	for solid: Solid in solids:
+		if solid.piece == piece:
+			continue
+		if (
+			absf(solid.top_at(piece.footprint_center) - piece.base_height) <= TOLERANCE
+			and PlanarGeometry.point_polygon_signed_distance(piece.footprint_center, solid.polygon) <= 0.0
+		):
+			return piece.height
+	return 0.0
 
 
 ## clip_polygon(), with a constant half-plane handled exactly.
