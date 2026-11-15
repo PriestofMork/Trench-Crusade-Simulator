@@ -58,7 +58,8 @@ Two layers with a one-way dependency: `game/` knows `core/`, never the reverse.
 | Movement | Free, not grid-based. Select a model, see reachable distance, click to move. |
 | Terrain data | Terrain is defined as plain data in core (simple shapes). The 3D scene, the navigation mesh and the rules checks are all built from that one definition. |
 | Paths | `core/` computes a reach field (where the base centre can legally get to, and the path there) with its own geometry; Godot's navigation is not used. The move command still validates every path it is given. |
-| Movement indicator | A selected model shows its reachable area as a blue outline with a faint fill, XCOM style, drawn from the reach field. |
+| Movement indicator | A selected model shows its reachable area as an outline with a faint fill, XCOM style, drawn from the reach field. The outline marks where the **edge** of the base can reach (the centre's area grown by the base radius). Blue: reachable without a roll. Orange: reachable only through a risky roll (climb or jump). |
+| Height | Terrain becomes a layered height field: for each grid cell, the list of floor heights a base can stand on, derived from the terrain data. The reach field runs over (cell, floor) pairs. Neighbouring floors within the open-terrain step are walked; bigger steps up are climbs, drops are jumps down, and gaps are jumps. Slopes and uneven ground fall out of the same structure. |
 | Markers | Spent before the roll; cap of 6 per kind per model. |
 | Blood markers | When a roll is made, the opponent is prompted whether to spend blood markers on it. |
 | Blessing markers | The rolling player is prompted whether to spend blessing markers, if they have any. |

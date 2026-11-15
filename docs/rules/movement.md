@@ -5,6 +5,9 @@
 - The model moves up to its Movement characteristic in inches.
 - Climbing and jumping are done as part of a move.
 - A model may only come within 1" of an enemy model by charging.
+- A model may move through friendly models' bases freely, but may not end its
+  movement with its base overlapping another base.
+- A model may not move through enemy models' bases.
 
 ## Open terrain
 
@@ -16,12 +19,14 @@ These need no climb and are moved over normally:
 
 ## Climb
 
-- A model within 1" of a sheer surface may attempt to climb up or down it.
+- A model whose base touches a sheer surface may attempt to climb up or down it.
+  (The tabletop rule allows 1" of slack; the digital game does not need it.)
 - It must have enough movement left to clear the whole surface; it can never end
   part-way up.
 - Make a risky success roll when the model reaches the surface.
-  - Success: the model is moved straight up or down to the top or bottom of the
-    surface. At the top it is placed with the centre of its base on the upper edge.
+  - Success: the model is moved to the top or bottom of the surface, with its base
+    placed directly above (or below) the point where it touched the surface. If the
+    surface is slanted, it is placed at the closest point on the top (or bottom).
     It may carry on moving with whatever movement it has left.
   - Failure: the model stays where it attempted the climb, and its activation ends.
 - Cost: the vertical distance climbed, in inches of movement.
@@ -84,7 +89,9 @@ These need no climb and are moved over normally:
 
 ## Open questions
 
-1. May a model move through other models' bases (friendly or enemy)? (Assumed: no.)
-2. Does a model in melee have any way to move other than Retreat? (Assumed: no.)
-3. A model that goes Down from a fall mid-move: its move ends there. (Assumed.)
-4. Difficult and dangerous terrain.
+1. Does a model in melee have any way to move other than Retreat? (Assumed: no.)
+2. A model that goes Down from a fall mid-move: its move ends there. (Assumed.)
+3. Slopes and ramps: is the cost the distance along the surface, or only the
+   horizontal distance? (Assumed: along the surface.)
+4. Is there a slope too steep to walk, which must be climbed instead?
+5. Difficult and dangerous terrain.
