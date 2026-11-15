@@ -66,6 +66,7 @@ Two layers with a one-way dependency: `game/` knows `core/`, never the reverse.
 | Blood markers | When a roll is made, the opponent is prompted whether to spend blood markers on it. |
 | Blessing markers | The rolling player is prompted whether to spend blessing markers, if they have any. |
 | Modifiers | Weapon and situational modifiers are applied automatically and shown in the roll breakdown. |
+| Undo | Every command can be undone, back to the start of the game, by restoring a snapshot of the full state including the dice state. Take-backs are agreed between players, not policed. Online play will need both players to accept an undo. |
 | Manual override | A way to set markers or move a model by hand must exist, so games are playable before every rule is automated. |
 | Maps | Imported from Tabletop Simulator saves where possible, with collision blocked out by hand. A map editor comes later. |
 | Warband builder | Built in, later. Modelled on Trench Companion. |

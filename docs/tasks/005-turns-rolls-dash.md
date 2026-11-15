@@ -16,8 +16,11 @@ Design reference: "Rolls are a general pipeline" and "Pending decisions" in
 These fill gaps in the rules files. Follow them, and list them in your report so the
 project owner can confirm or change them.
 
-1. A Move action is one path: the player picks a destination, the model goes there,
-   and any movement left over is lost. Moving in several clicks is not possible.
+1. A Move action may be made in several steps: the model can move part of its
+   distance, then more, as long as the total stays within the action's budget. The
+   action is finished as soon as the model does anything else (starts another action
+   or ends its activation); movement left over is then lost. The same applies to the
+   move granted by a successful Dash.
 2. A model's activation starts when it takes its first action, not when it is
    selected. Selecting only previews. Once a model has started its activation, no
    other model can act until that activation ends.
@@ -25,7 +28,10 @@ project owner can confirm or change them.
 4. If a player has no unactivated models left, the other player keeps activating.
 5. The choice of who activates first is made at the start of every turn, turn 1
    included.
-6. A model that stood up this activation moves at half distance for Move and Dash.
+6. A model that stood up this activation has all of its movement halved for that
+   activation: Move, Dash, any extra movement it gains from other rules, and later
+   the D6 of a charge. Apply the halving in one place that every movement budget
+   passes through.
 7. Marker prompts: the opponent decides on blood markers first, then the rolling
    player decides on blessing markers, seeing the opponent's choice. A prompt is
    skipped when there is nothing to spend.
@@ -84,10 +90,22 @@ project owner can confirm or change them.
 
 **Core: actions in this brief**
 - **Move:** as built, now as an action, with the budget from the Movement
-  characteristic (halved after standing up) and ruling 1.
+  characteristic (halved after standing up), spent over one or more steps as in
+  ruling 1. The indicator shows what is left after each step.
 - **Dash:** a risky success roll. On success the model gets a move of up to its
   Movement characteristic (halved after standing up), chosen like a normal move. On
   failure the activation ends. The player may decline the move after a success.
+
+**Core: undo**
+- Players can take things back; whether a take-back is acceptable is agreed between
+  them, not enforced. Provide undo of the last command, repeatable back to the start
+  of the game, and redo.
+- Undo is not a rule command. It lives beside the command log: keep a snapshot of
+  the full game state, including the dice service's state, before each command, and
+  restore it. Because the dice state is restored too, repeating the same command
+  after an undo gives the same dice, so undo cannot be used to fish for a better
+  roll. Pending decisions are part of the state and are restored with it.
+- Undoing a step of a multi-step Move gives that distance back.
 
 **Core: manual override**
 - Override commands, clearly separated from rule commands: set a model's markers,
@@ -119,6 +137,8 @@ project owner can confirm or change them.
 - A simple, clean 2D panel is fine. 3D physics dice are out of scope.
 
 **Game: override panel**
+- Undo and redo buttons in the HUD, also on Ctrl+Z and Ctrl+Y, always available to
+  whoever is at the screen.
 - A panel toggled with a key that sends the override commands for the selected
   model. It is how blood and blessing prompts get tested in this brief.
 
@@ -137,6 +157,11 @@ project owner can confirm or change them.
 - Risky: a failed Dash ends the activation; a successful one grants the move; the
   warband flag makes a normally safe success roll risky.
 - Events: a full Dash with a blood prompt produces the expected event sequence.
+- Multi-step Move: two steps within the budget are accepted, a third beyond it is
+  rejected, and starting Dash closes the Move with its remainder lost.
+- Undo and redo: undoing a move restores position and budget; undoing a resolved
+  roll restores markers, activation state and dice state, and repeating the command
+  gives the identical roll; undoing back through a pending decision restores it.
 - Replay: the same seed and the same command list give the same final state.
 
 ## Done when

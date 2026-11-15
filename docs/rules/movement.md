@@ -3,6 +3,8 @@
 ## Move
 
 - The model moves up to its Movement characteristic in inches.
+- The move may be made in several steps (part of the distance, then more). It is
+  finished as soon as the model does anything else; movement left over is lost.
 - Climbing and jumping are done as part of a move.
 - A model may only come within 1" of an enemy model by charging.
 - A model may move through friendly models' bases freely, but may not end its

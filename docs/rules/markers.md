@@ -35,6 +35,8 @@ The reverse of blood markers. Spent by the model's own player:
   spend blood markers on it, and the rolling player is asked whether to spend
   blessing markers, if any are available. The dice are rolled only after both have
   answered.
+- Order: the opponent decides on blood markers first; then the rolling player
+  decides on blessing markers, seeing the opponent's choice.
 
 ## Down
 
@@ -46,8 +48,6 @@ The reverse of blood markers. Spent by the model's own player:
 
 ## Open questions
 
-1. Order of the two prompts when both players may spend on the same roll, and
-   whether the second player sees the first player's choice.
-2. Does the infection increase apply only to models that already have at least one
+1. Does the infection increase apply only to models that already have at least one
    infection marker? (Assumed yes.)
-3. What can a model do if it is prevented from standing up?
+2. What can a model do if it is prevented from standing up?
