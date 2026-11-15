@@ -12,8 +12,10 @@ var position: Vector3
 var base_mm: int
 ## Movement characteristic, inches.
 var movement: float
-## Movement left in the current activation, inches.
-var movement_left: float
+## Whether the model is Down (docs/rules/markers.md).
+var down: bool = false
+## Marker counts by kind (see Markers); kinds not present count as 0.
+var markers: Dictionary[StringName, int] = {}
 
 
 func _init(
@@ -24,7 +26,6 @@ func _init(
 	position = p_position
 	base_mm = p_base_mm
 	movement = p_movement
-	movement_left = p_movement
 
 
 func base_diameter_inches() -> float:
@@ -37,3 +38,12 @@ func base_radius_inches() -> float:
 
 func height_inches() -> float:
 	return BaseSizes.height_inches(base_mm)
+
+
+func marker_count(kind: StringName) -> int:
+	return markers.get(kind, 0)
+
+
+## Only for commands and rules: sets a marker count, clamped to 0..Markers.CAP.
+func set_markers(kind: StringName, count: int) -> void:
+	markers[kind] = clampi(count, 0, Markers.CAP)

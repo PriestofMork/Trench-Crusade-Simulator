@@ -75,7 +75,7 @@ class Layer:
 var model_id: int
 ## The model's position when the field was computed.
 var start: Vector3
-var movement_left: float
+var budget: float
 var cell_size: float
 ## Table position (world x, z) of node (0, 0). Node (i, j) is at origin + (i, j) * cell_size.
 var origin: Vector2
@@ -145,7 +145,9 @@ var _heap_cost: PackedFloat64Array = PackedFloat64Array()
 var _heap_state: PackedInt32Array = PackedInt32Array()
 
 
-func _init(state: GameState, p_model_id: int, p_cell_size: float = CELL_SIZE) -> void:
+## `p_budget` is how far the model may move (the action's budget); negative
+## means its full Movement characteristic.
+func _init(state: GameState, p_model_id: int, p_budget: float = -1.0, p_cell_size: float = CELL_SIZE) -> void:
 	model_id = p_model_id
 	cell_size = p_cell_size
 	var model: ModelState = state.get_model(model_id)
@@ -153,12 +155,12 @@ func _init(state: GameState, p_model_id: int, p_cell_size: float = CELL_SIZE) ->
 		push_error("ReachField: no model with id %d" % model_id)
 		return
 	start = model.position
-	movement_left = model.movement_left
+	budget = p_budget if p_budget >= 0.0 else model.movement
 	_start_2d = Vector2(start.x, start.z)
 	legality = MoveLegality.new(state, model)
 	field = legality.field
 	_radius = legality.radius
-	_limit = movement_left + MARGIN_CELLS * cell_size
+	_limit = budget + MARGIN_CELLS * cell_size
 	for step: Vector2i in _STEPS:
 		_step_lengths.append(Vector2(step).length() * cell_size)
 	_build_grid(state)
@@ -284,7 +286,7 @@ func state_cost(index: int) -> float:
 ## Whether a move may end on this state: the model may stop there, and its path
 ## plus any surcharge fits the movement left.
 func is_state_reachable(index: int) -> bool:
-	if _cost[index] + _surface_surcharge[_state_surface[index]] > movement_left + EPSILON:
+	if _cost[index] + _surface_surcharge[_state_surface[index]] > budget + EPSILON:
 		return false
 	if _stand_ok[index] == 0:
 		var ok: bool = legality.stop_result_if_passing(_state_pos_2d[index], _state_surface[index]) == MoveLegality.Result.OK
@@ -374,7 +376,7 @@ func _node_value(node: int, p: Vector2, surface: int) -> float:
 		return blocked
 	var state: int = _state_at(node, surface)
 	if state != NONE and _cost[state] < INF:
-		return maxf(_cost[state] + _surface_surcharge[surface] - movement_left, blocked)
+		return maxf(_cost[state] + _surface_surcharge[surface] - budget, blocked)
 	return cell_size
 
 
@@ -382,7 +384,7 @@ func _build_grid(state: GameState) -> void:
 	# Past the table edge by the margin too, so an area that runs to the edge
 	# still closes on the grid. Nodes off the table are simply never legal.
 	var margin: float = MARGIN_CELLS * cell_size
-	var reach: float = movement_left + _radius + margin
+	var reach: float = budget + _radius + margin
 	var left: int = maxi(floori(minf(reach, start.x + margin) / cell_size + EPSILON), 0)
 	var right: int = maxi(floori(minf(reach, state.table_width - start.x + margin) / cell_size + EPSILON), 0)
 	var near: int = maxi(floori(minf(reach, start.z + margin) / cell_size + EPSILON), 0)
@@ -882,8 +884,8 @@ func _resolve(target: Vector2, surfaces: PackedInt32Array) -> void:
 	for surface: int in surfaces:
 		if legality.point_result(target, surface) != MoveLegality.Result.OK:
 			continue
-		var budget: float = movement_left - field.stop_surcharge(surface, legality.start_piece_ids) + EPSILON
-		var found: Vector2 = _best_source(target, surface, minf(budget, best_total))
+		var stop_budget: float = budget - field.stop_surcharge(surface, legality.start_piece_ids) + EPSILON
+		var found: Vector2 = _best_source(target, surface, minf(stop_budget, best_total))
 		if found.y != NONE and found.x < best_total:
 			best_total = found.x
 			_query_anchor = int(found.y)
@@ -892,8 +894,8 @@ func _resolve(target: Vector2, surfaces: PackedInt32Array) -> void:
 
 
 ## The cheapest anchor (or state, made an anchor) on `surface` that can walk
-## straight to `target` within `budget`: (total cost, anchor), anchor NONE if none.
-func _best_source(target: Vector2, surface: int, budget: float) -> Vector2:
+## straight to `target` within `limit`: (total cost, anchor), anchor NONE if none.
+func _best_source(target: Vector2, surface: int, limit: float) -> Vector2:
 	# Candidates as (total cost, anchor or -2 - state).
 	var candidates: Array[Vector2] = []
 	for k: int in _start_states:
@@ -927,7 +929,7 @@ func _best_source(target: Vector2, surface: int, budget: float) -> Vector2:
 					candidates.append(Vector2(_anchor_cost[anchor] + legality.walk_length(from, target, surface), anchor))
 	candidates.sort()
 	for candidate: Vector2 in candidates:
-		if candidate.x > budget:
+		if candidate.x > limit:
 			break
 		var source: int = int(candidate.y)
 		var from: Vector2

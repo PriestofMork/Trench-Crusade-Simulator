@@ -58,8 +58,9 @@ func validate(state: GameState) -> String:
 	return ""
 
 
-func apply(state: GameState) -> void:
+func apply(state: GameState) -> Array[GameEvent]:
 	placed_model_id = state.add_model(player, position, base_mm, movement).id
+	return []
 
 
 static func _cylinders_overlap(

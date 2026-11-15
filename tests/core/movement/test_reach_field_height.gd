@@ -57,7 +57,7 @@ func _kinds(field: ReachField, id: int, path: Array[Vector3]) -> Array[Transitio
 func _assert_valid(field: ReachField, id: int, target: Vector3, label: String) -> MoveCommand:
 	var path: Array[Vector3] = field.path_to(target)
 	assert_false(path.is_empty(), "%s: a path" % label)
-	var command: MoveCommand = MoveCommand.new(id, path)
+	var command: MoveCommand = TurnHelper.move(state, id, path)
 	assert_eq(command.validate(state), "", "%s: MoveCommand accepts %s" % [label, str(path)])
 	assert_almost_eq(command.cost, field.cost_to(target), 0.0001, "%s: same cost" % label)
 	return command
@@ -263,10 +263,10 @@ func test_consistency_on_the_test_table() -> void:
 				continue
 			var target: Vector3 = field.state_position(k)
 			var path: Array[Vector3] = field.path_to(target)
-			var command: MoveCommand = MoveCommand.new(model.id, path)
+			var command: MoveCommand = TurnHelper.move(state, model.id, path)
 			assert_eq(command.validate(state), "", "model %d to %s via %s" % [model.id, str(target), str(path)])
 			assert_almost_eq(command.cost, field.cost_to(target), 0.0001)
-			assert_true(command.cost <= model.movement_left + 0.0001)
+			assert_true(command.cost <= model.movement + 0.0001)
 			total_paths += 1
 		# Off-grid points on whatever floors are there.
 		for j: int in 300:
@@ -279,7 +279,7 @@ func test_consistency_on_the_test_table() -> void:
 				if not field.is_reachable(target):
 					continue
 				var path: Array[Vector3] = field.path_to(target)
-				assert_eq(MoveCommand.new(model.id, path).validate(state), "", "model %d to %s" % [model.id, str(target)])
+				assert_eq(TurnHelper.move(state, model.id, path).validate(state), "", "model %d to %s" % [model.id, str(target)])
 				total_paths += 1
 	gut.p("validated %d paths over %d fields in %.0f ms" % [total_paths, fields, (Time.get_ticks_usec() - started) / 1000.0])
 	assert_gt(total_paths, 1000)

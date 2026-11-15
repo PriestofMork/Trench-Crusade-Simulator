@@ -37,7 +37,8 @@ func validate(_state: GameState) -> String:
 	return ""
 
 
-func apply(state: GameState) -> void:
+func apply(state: GameState) -> Array[GameEvent]:
 	placed_terrain_id = state.add_terrain(
 		footprint_center, Vector2(size.x, size.z), rotation, base_height, size.y, tag, shape
 	).id
+	return []

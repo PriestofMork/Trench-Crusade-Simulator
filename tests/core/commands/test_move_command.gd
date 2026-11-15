@@ -17,26 +17,25 @@ func _place(player: int, pos: Vector3, base_mm: int, movement: float = 6.0) -> i
 
 
 func _move(waypoints: Array[Vector3]) -> MoveCommand:
-	return MoveCommand.new(mover, waypoints)
+	return TurnHelper.move(state, mover, waypoints)
 
 
 func test_model_starts_with_full_movement() -> void:
 	var model: ModelState = state.get_model(mover)
 	assert_eq(model.movement, 6.0)
-	assert_eq(model.movement_left, 6.0)
 
 
 func test_accepts_legal_path() -> void:
 	var command: MoveCommand = _move([Vector3(13, 0, 10), Vector3(13, 0, 12)])
 	assert_eq(state.execute(command), "")
 	assert_eq(state.get_model(mover).position, Vector3(13, 0, 12))
-	assert_eq(command.rejection, MoveCommand.Rejection.NONE)
+	assert_eq(command.rejection, MovePath.Rejection.NONE)
 
 
 func test_rejects_too_long() -> void:
 	var command: MoveCommand = _move([Vector3(16.5, 0, 10)])
 	assert_string_contains(state.execute(command), "Too far")
-	assert_eq(command.rejection, MoveCommand.Rejection.TOO_FAR)
+	assert_eq(command.rejection, MovePath.Rejection.TOO_FAR)
 	assert_eq(state.get_model(mover).position, Vector3(10, 0, 10))
 
 
@@ -44,7 +43,7 @@ func test_rejects_through_terrain() -> void:
 	state.execute(PlaceTerrainCommand.new(Vector2(13, 10), Vector3(1, 2, 4)))
 	var command: MoveCommand = _move([Vector3(15.5, 0, 10)])
 	assert_string_contains(state.execute(command), "terrain")
-	assert_eq(command.rejection, MoveCommand.Rejection.BLOCKED)
+	assert_eq(command.rejection, MovePath.Rejection.BLOCKED)
 
 
 func test_rejects_ending_inside_terrain() -> void:
@@ -77,7 +76,7 @@ func test_rejects_ending_on_friendly_base() -> void:
 	_place(0, Vector3(13, 0, 10), 32)
 	var command: MoveCommand = _move([Vector3(13.5, 0, 10)])
 	assert_string_contains(state.execute(command), "another model")
-	assert_eq(command.rejection, MoveCommand.Rejection.BLOCKED)
+	assert_eq(command.rejection, MovePath.Rejection.BLOCKED)
 	assert_eq(state.get_model(mover).position, Vector3(10, 0, 10))
 	# Through it and out the far side, but stopping still overlapping it.
 	var r: float = BaseSizes.mm_to_inches(32) / 2.0
@@ -89,20 +88,20 @@ func test_rejects_path_through_enemy_base() -> void:
 	# Far enough from the start and the end that only the base itself is in the way.
 	var walker: int = _place(0, Vector3(10, 0, 30), 32, 10.0)
 	_place(1, Vector3(15, 0, 30), 25)
-	var command: MoveCommand = MoveCommand.new(walker, [Vector3(19.5, 0, 30)])
+	var command: MoveCommand = TurnHelper.move(state, walker, [Vector3(19.5, 0, 30)])
 	assert_ne(state.execute(command), "")
-	assert_eq(command.rejection, MoveCommand.Rejection.TOO_CLOSE_TO_ENEMY)
+	assert_eq(command.rejection, MovePath.Rejection.TOO_CLOSE_TO_ENEMY)
 	assert_eq(state.get_model(walker).position, Vector3(10, 0, 30))
 
 
 func test_rejects_off_table() -> void:
 	var near_edge: int = _place(0, Vector3(2, 0, 20), 32)
-	var command: MoveCommand = MoveCommand.new(near_edge, [Vector3(0.3, 0, 20)])
+	var command: MoveCommand = TurnHelper.move(state, near_edge, [Vector3(0.3, 0, 20)])
 	assert_string_contains(state.execute(command), "table")
-	assert_eq(command.rejection, MoveCommand.Rejection.BLOCKED)
+	assert_eq(command.rejection, MovePath.Rejection.BLOCKED)
 	# Running along the edge with the base just touching it is fine.
 	var r: float = BaseSizes.mm_to_inches(32) / 2.0
-	assert_eq(state.execute(MoveCommand.new(near_edge, [Vector3(r, 0, 20), Vector3(r, 0, 23)])), "")
+	assert_eq(state.execute(TurnHelper.move(state, near_edge, [Vector3(r, 0, 20), Vector3(r, 0, 23)])), "")
 
 
 func test_rejects_ending_within_one_inch_of_enemy() -> void:
@@ -111,7 +110,7 @@ func test_rejects_ending_within_one_inch_of_enemy() -> void:
 	var r: float = BaseSizes.mm_to_inches(32) / 2.0
 	var too_close: MoveCommand = _move([Vector3(14 - 2 * r - 0.9, 0, 10)])
 	assert_string_contains(state.execute(too_close), "enemy")
-	assert_eq(too_close.rejection, MoveCommand.Rejection.TOO_CLOSE_TO_ENEMY)
+	assert_eq(too_close.rejection, MovePath.Rejection.TOO_CLOSE_TO_ENEMY)
 	var exactly_one_inch: MoveCommand = _move([Vector3(14 - 2 * r - 1.0, 0, 10)])
 	assert_eq(state.execute(exactly_one_inch), "")
 
@@ -121,7 +120,7 @@ func test_rejects_passing_within_one_inch_of_enemy() -> void:
 	_place(1, Vector3(12, 0, 11.5), 32)
 	var command: MoveCommand = _move([Vector3(14, 0, 10)])
 	assert_eq(state.execute(command), "Too close to an enemy: only a charge may come within 1\".")
-	assert_eq(command.rejection, MoveCommand.Rejection.TOO_CLOSE_TO_ENEMY)
+	assert_eq(command.rejection, MovePath.Rejection.TOO_CLOSE_TO_ENEMY)
 
 
 func test_allows_passing_and_ending_near_friend() -> void:
@@ -138,29 +137,25 @@ func test_allows_touching_bases() -> void:
 	assert_eq(state.execute(_move([Vector3(14 - 2 * r, 0, 10)])), "")
 
 
-func test_deducts_path_length_and_allows_second_move() -> void:
-	assert_eq(state.execute(_move([Vector3(13, 0, 10), Vector3(13, 0, 12)])), "")
-	assert_almost_eq(state.get_model(mover).movement_left, 1.0, 0.0001)
-	assert_ne(state.execute(_move([Vector3(13, 0, 13.5)])), "", "1.5\" is more than is left")
-	assert_eq(state.execute(_move([Vector3(13, 0, 13)])), "")
-	assert_almost_eq(state.get_model(mover).movement_left, 0.0, 0.0001)
+func test_one_path_per_move_and_the_rest_is_lost() -> void:
+	var command: MoveCommand = _move([Vector3(13, 0, 10), Vector3(13, 0, 12)])
+	assert_eq(state.execute(command), "")
+	assert_almost_eq(command.cost, 5.0, 0.0001)
+	assert_eq(state.last_events[0].kind, GameEvent.Kind.MODEL_MOVED)
+	assert_almost_eq(float(state.last_events[0].data["cost"]), 5.0, 0.0001)
+	assert_null(state.pending, "the move is answered")
+	var again: MoveCommand = MoveCommand.new(0, mover, [Vector3(13, 0, 13)])
+	assert_ne(state.execute(again), "", "no second path for the same Move")
+	assert_ne(state.execute(BeginActionCommand.new(0, mover, &"move")), "", "Move once per activation")
 
 
 func test_rejects_unknown_model_and_empty_path() -> void:
-	assert_ne(state.execute(MoveCommand.new(999, [Vector3(11, 0, 10)])), "")
+	assert_ne(state.execute(TurnHelper.move(state, 999, [Vector3(11, 0, 10)])), "")
 	assert_ne(state.execute(_move([])), "")
 
 
 func test_rejects_leaving_flat_ground() -> void:
 	assert_ne(state.execute(_move([Vector3(11, 2, 10)])), "")
-
-
-func test_reset_movement_restores_full_movement() -> void:
-	state.execute(_move([Vector3(14, 0, 10)]))
-	assert_almost_eq(state.get_model(mover).movement_left, 2.0, 0.0001)
-	assert_eq(state.execute(ResetMovementCommand.new(mover)), "")
-	assert_eq(state.get_model(mover).movement_left, 6.0)
-	assert_ne(state.execute(ResetMovementCommand.new(999)), "")
 
 
 func test_place_terrain() -> void:

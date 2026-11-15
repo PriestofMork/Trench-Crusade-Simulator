@@ -1,7 +1,7 @@
 class_name GameState
 extends RefCounted
 ## The whole state of a game. Plain data; changed only by applying commands
-## through execute().
+## through execute() or submit().
 
 const DEFAULT_TABLE_SIZE_INCHES: float = 48.0
 
@@ -12,6 +12,19 @@ var table_depth: float
 var models: Array[ModelState] = []
 var terrain: Array[TerrainPiece] = []
 var dice: Dice
+## The rules in play: actions, roll modifiers, choices and reactions.
+var rules: Ruleset
+var turn: TurnState = TurnState.new()
+## Warband-wide state, indexed by player.
+var warbands: Array[WarbandState] = [WarbandState.new(0), WarbandState.new(1)]
+## What core is waiting for, or null.
+var pending: PendingDecision = null
+## The roll under way (waiting for pre-roll choices), or null.
+var active_roll: ActiveRoll = null
+## Every command applied, in order: with the seed, this is the whole game.
+var history: Array[Command] = []
+## The events of the last command applied.
+var last_events: Array[GameEvent] = []
 
 var _next_model_id: int = 1
 var _next_terrain_id: int = 1
@@ -26,18 +39,29 @@ func _init(
 	p_table_depth: float = DEFAULT_TABLE_SIZE_INCHES
 ) -> void:
 	dice = Dice.new(seed_value)
+	rules = Ruleset.standard()
 	table_width = p_table_width
 	table_depth = p_table_depth
 
 
 ## Validates and, if valid, applies a command. Returns "" on success or the
-## reason the command was rejected.
+## reason the command was rejected; the events are in last_events.
 func execute(command: Command) -> String:
-	var error: String = command.validate(self)
-	if error != "":
-		return error
-	command.apply(self)
-	return ""
+	return submit(command).error
+
+
+## Validates and, if valid, applies a command, returning the rejection or the
+## events of what happened, in order.
+func submit(command: Command) -> CommandResult:
+	var result: CommandResult = CommandResult.new()
+	result.error = command.validate(self)
+	if result.error != "":
+		last_events = []
+		return result
+	result.events = command.apply(self)
+	history.append(command)
+	last_events = result.events
+	return result
 
 
 func get_model(id: int) -> ModelState:

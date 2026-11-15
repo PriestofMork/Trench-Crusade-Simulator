@@ -72,7 +72,7 @@ func test_point_behind_wall_needs_way_around() -> void:
 	assert_between(cost, 9.5, 12.0)
 	var path: Array[Vector3] = long_field.path_to(target)
 	assert_gt(path.size(), 1, "the path bends round the wall")
-	assert_eq(state.execute(MoveCommand.new(long, path)), "")
+	assert_eq(state.execute(TurnHelper.move(state, long, path)), "")
 	assert_eq(state.get_model(long).position, target)
 
 
@@ -129,7 +129,7 @@ func test_every_returned_path_is_accepted_by_move_command() -> void:
 		var target: Vector3 = field.state_position(i)
 		var path: Array[Vector3] = field.path_to(target)
 		assert_false(path.is_empty())
-		var command: MoveCommand = MoveCommand.new(id, path)
+		var command: MoveCommand = TurnHelper.move(state, id, path)
 		var error: String = command.validate(state)
 		assert_eq(error, "", "path to node %s" % str(target))
 		assert_almost_eq(command.cost, field.cost_to(target), 0.0001, "the field reports what the move costs")
@@ -149,7 +149,7 @@ func test_every_returned_path_is_accepted_by_move_command() -> void:
 		if not field.is_reachable(p):
 			continue
 		var path: Array[Vector3] = field.path_to(p)
-		assert_eq(MoveCommand.new(id, path).validate(state), "", "path to %s" % str(p))
+		assert_eq(TurnHelper.move(state, id, path).validate(state), "", "path to %s" % str(p))
 		assert_true(path[path.size() - 1].is_equal_approx(p))
 		off_grid += 1
 	assert_gt(off_grid, 200)
@@ -159,9 +159,10 @@ func test_field_after_a_move_shows_what_is_left() -> void:
 	var id: int = _place(0, Vector3(24, 0, 24), 32, 6.0)
 	var before: ReachField = ReachField.new(state, id)
 	var path: Array[Vector3] = before.path_to(Vector3(28, 0, 24))
-	assert_eq(state.execute(MoveCommand.new(id, path)), "")
-	var after: ReachField = ReachField.new(state, id)
-	assert_almost_eq(after.movement_left, 2.0, 0.0001)
+	assert_eq(state.execute(TurnHelper.move(state, id, path)), "")
+	# What a move of the 2" left over would reach (the reach field takes any budget).
+	var after: ReachField = ReachField.new(state, id, 2.0)
+	assert_almost_eq(after.budget, 2.0, 0.0001)
 	assert_true(after.is_reachable(Vector3(29.9, 0, 24)))
 	assert_false(after.is_reachable(Vector3(30.1, 0, 24)))
 	assert_false(after.is_reachable(Vector3(24, 0, 24)), "the old start is 4\" away now")
@@ -174,8 +175,8 @@ func test_field_after_a_move_shows_what_is_left() -> void:
 
 func test_model_with_no_movement_left_reaches_only_its_spot() -> void:
 	var id: int = _place(0, Vector3(24, 0, 24), 32, 6.0)
-	state.execute(MoveCommand.new(id, [Vector3(30, 0, 24)]))
-	var field: ReachField = ReachField.new(state, id)
+	state.execute(TurnHelper.move(state, id, [Vector3(30, 0, 24)]))
+	var field: ReachField = ReachField.new(state, id, 0.0)
 	assert_true(field.is_reachable(Vector3(30, 0, 24)))
 	assert_false(field.is_reachable(Vector3(30.3, 0, 24)))
 
@@ -201,7 +202,7 @@ func test_contour_values_are_negative_inside_and_positive_outside() -> void:
 						checked += 1
 					elif value <= 0.0:
 						# Only states just past the movement limit may round to the edge.
-						assert_almost_eq(field.state_cost(k), field.movement_left, 0.001)
+						assert_almost_eq(field.state_cost(k), field.budget, 0.001)
 	assert_gt(checked, 100)
 
 
@@ -223,7 +224,7 @@ func test_friendly_line_no_longer_blocks_the_spot_behind_it() -> void:
 	assert_true(field.is_reachable(target))
 	assert_almost_eq(field.cost_to(target), 3.9, 0.0001)
 	var path: Array[Vector3] = field.path_to(target)
-	assert_eq(MoveCommand.new(id, path).validate(state), "")
+	assert_eq(TurnHelper.move(state, id, path).validate(state), "")
 	# But not stopping on the line itself.
 	assert_false(field.is_reachable(Vector3(26, 0, 24)))
 	assert_false(field.is_reachable(Vector3(26.5, 0, 24.3)))
@@ -283,7 +284,7 @@ func test_paths_through_friends_are_accepted_by_move_command() -> void:
 			continue
 		var target: Vector3 = field.state_position(i)
 		var path: Array[Vector3] = field.path_to(target)
-		assert_eq(MoveCommand.new(id, path).validate(state), "", "path to node %s" % str(target))
+		assert_eq(TurnHelper.move(state, id, path).validate(state), "", "path to node %s" % str(target))
 		if target.x > 26.0:
 			through += 1
 		tested += 1
@@ -291,7 +292,7 @@ func test_paths_through_friends_are_accepted_by_move_command() -> void:
 		var p: Vector3 = Vector3(17.0 + fmod(k * 0.6180339, 14.0), 0, 17.0 + fmod(k * 0.4142135, 14.0))
 		if not field.is_reachable(p):
 			continue
-		assert_eq(MoveCommand.new(id, field.path_to(p)).validate(state), "", "path to %s" % str(p))
+		assert_eq(TurnHelper.move(state, id, field.path_to(p)).validate(state), "", "path to %s" % str(p))
 		tested += 1
 	gut.p("validated %d paths, %d of them to nodes past the friendly line" % [tested, through])
 	assert_gt(tested, 500)
@@ -319,7 +320,7 @@ func test_closest_destination_just_outside_snaps_to_the_closest_valid_centre() -
 		assert_almost_eq(point.distance_to(cursor), 0.4, 0.01, "angle %.1f" % angle)
 		assert_true(point.distance_to(start + direction * 6.0) < 0.1, "angle %.1f: %s" % [angle, str(point)])
 		assert_true(field.is_reachable(point))
-		assert_eq(MoveCommand.new(id, field.path_to(point)).validate(state), "")
+		assert_eq(TurnHelper.move(state, id, field.path_to(point)).validate(state), "")
 	# Further out than a base radius: nothing.
 	assert_null(field.closest_destination(start + Vector3(6.0 + r + 0.05, 0, 0), r))
 
@@ -337,11 +338,11 @@ func test_closest_destination_next_to_a_friend_and_a_wall() -> void:
 	var point: Vector3 = snapped
 	assert_almost_eq(point.distance_to(state.get_model(friend).position), 2 * r, 0.01)
 	assert_true(field.is_reachable(point))
-	assert_eq(MoveCommand.new(id, field.path_to(point)).validate(state), "")
+	assert_eq(TurnHelper.move(state, id, field.path_to(point)).validate(state), "")
 	# Cursor right at the wall face: the base touches the wall.
 	var wall_cursor: Vector3 = Vector3(23, 0, 27.45)
 	var at_wall: Variant = field.closest_destination(wall_cursor, r)
 	assert_not_null(at_wall)
 	assert_almost_eq((at_wall as Vector3).z, 27.5 - r, 0.01)
 	assert_almost_eq((at_wall as Vector3).x, 23.0, 0.05)
-	assert_eq(MoveCommand.new(id, field.path_to(at_wall)).validate(state), "")
+	assert_eq(TurnHelper.move(state, id, field.path_to(at_wall)).validate(state), "")
