@@ -1,8 +1,8 @@
 class_name MoveCommand
 extends Command
-## Answers a pending MOVE decision: `model_id` moves along one path (see
-## MovePath) within the decision's budget. Ruling 1 of brief 005: one path per
-## granted move; whatever is left over is lost.
+## One step of an open move: `model_id` moves along a path (see MovePath)
+## within what is left of the move's budget. Ruling 1 of brief 005: the move
+## stays open with the rest until the model does anything else.
 
 var player: int
 var model_id: int
@@ -48,6 +48,12 @@ func apply(state: GameState) -> Array[GameEvent]:
 	shown[shown.size() - 1] = _path.end_position
 	# Exactly on the floor, so small errors never build up.
 	model.position = _path.end_position
+	var decision: PendingDecision = state.pending
+	var left: float = maxf(decision.budget - cost, 0.0)
 	state.pending = null
 	_path = null
-	return [GameEvent.new(GameEvent.Kind.MODEL_MOVED, player, model_id, {"path": shown, "cost": cost})]
+	var events: Array[GameEvent] = [GameEvent.new(GameEvent.Kind.MODEL_MOVED, player, model_id, {
+		"path": shown, "cost": cost, "left": left
+	})]
+	TurnFlow.continue_move(state, model, decision.action_id, left, events)
+	return events

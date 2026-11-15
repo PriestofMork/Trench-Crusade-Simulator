@@ -30,6 +30,8 @@ func apply(state: GameState) -> Array[GameEvent]:
 	var model: ModelState = state.get_model(model_id)
 	var action: ActionDef = state.rules.action(action_id)
 	var t: TurnState = state.turn
+	# Doing anything else finishes an open move (ruling 1 of brief 005).
+	TurnFlow.finish_open_move(state, events, "another action")
 	if t.active_model_id != model_id:
 		TurnFlow.begin_activation(state, model, events)
 	t.actions_used.append(action_id)

@@ -6,6 +6,9 @@ extends RefCounted
 ## Only commands (and rules they run) call these; each appends the events of
 ## what it did.
 
+## Less movement than this left closes an open move.
+const MOVE_EPSILON: float = 0.0001
+
 
 ## Starts the next turn: clears activations and asks who chooses the first
 ## player (the player with fewer models standing; a roll-off on a tie).
@@ -86,26 +89,54 @@ static func begin_activation(state: GameState, model: ModelState, events: Array[
 static func end_activation(state: GameState, events: Array[GameEvent], reason: String) -> void:
 	var t: TurnState = state.turn
 	var model: ModelState = state.get_model(t.active_model_id)
-	if state.pending != null and state.pending.kind == PendingDecision.Kind.MOVE:
-		state.pending = null
+	finish_open_move(state, events, "the activation ended")
 	_clear_activation(t)
 	events.append(GameEvent.new(GameEvent.Kind.ACTIVATION_ENDED, model.player, model.id, {"reason": reason}))
 	_hand_over(state, 1 - model.player, events)
 
 
-## How far `model` may move with a move granted by an action: its Movement,
-## halved if it stood up this activation (or will, being Down and not active).
-static func movement_budget(state: GameState, model: ModelState) -> float:
+## The one place every movement budget passes through: `inches` of movement
+## (by default the model's Movement characteristic) as `model` may use them
+## now, halved if it stood up this activation (or will, being Down and not
+## active). Move, Dash and any later source of movement (equipment,
+## abilities, the D6 of a charge) must go through here.
+static func movement_budget(state: GameState, model: ModelState, inches: float = -1.0) -> float:
+	if inches < 0.0:
+		inches = model.movement
 	var t: TurnState = state.turn
 	var halved: bool = t.stood_up if t.active_model_id == model.id else model.down
-	return model.movement * (0.5 if halved else 1.0)
+	return inches * (0.5 if halved else 1.0)
 
 
-## Asks the owner of `model` for one path within its movement budget.
+## Opens a move for `model`: up to its movement budget, in one or more steps.
 static func offer_move(state: GameState, model: ModelState, action_id: StringName, events: Array[GameEvent]) -> void:
-	var budget: float = movement_budget(state, model)
+	_open_move(state, model, action_id, movement_budget(state, model), events)
+
+
+## After a step of an open move: keeps it open with what is left, if anything.
+static func continue_move(
+	state: GameState, model: ModelState, action_id: StringName, left: float, events: Array[GameEvent]
+) -> void:
+	if left > MOVE_EPSILON:
+		_open_move(state, model, action_id, left, events)
+
+
+## Finishes an open move, if there is one; what is left of it is lost.
+static func finish_open_move(state: GameState, events: Array[GameEvent], reason: String) -> void:
+	var pending: PendingDecision = state.pending
+	if pending == null or pending.kind != PendingDecision.Kind.MOVE:
+		return
+	state.pending = null
+	events.append(GameEvent.new(GameEvent.Kind.MOVE_FINISHED, pending.player, pending.model_id, {
+		"reason": reason, "left": pending.budget, "action_id": pending.action_id
+	}))
+
+
+static func _open_move(
+	state: GameState, model: ModelState, action_id: StringName, budget: float, events: Array[GameEvent]
+) -> void:
 	var decision: PendingDecision = PendingDecision.new(
-		PendingDecision.Kind.MOVE, model.player, "Move up to %.1f\", or stay." % budget
+		PendingDecision.Kind.MOVE, model.player, "Move up to %.1f\" more, or finish the move." % budget
 	)
 	decision.model_id = model.id
 	decision.budget = budget
@@ -135,7 +166,11 @@ static func activation_error(state: GameState, player: int, model: ModelState) -
 	var t: TurnState = state.turn
 	if t.turn == 0:
 		return "The game has not started."
-	if state.pending != null:
+	var pending: PendingDecision = state.pending
+	var own_open_move: bool = (
+		pending != null and pending.kind == PendingDecision.Kind.MOVE and pending.model_id == model.id
+	)
+	if pending != null and not own_open_move:
 		return "Waiting for a decision first."
 	if state.active_roll != null:
 		return "A roll is under way."

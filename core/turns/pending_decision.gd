@@ -13,8 +13,10 @@ enum Kind {
 	## Before the dice are rolled: spend something on the roll, such as
 	## markers (RollChoiceCommand). See `choice`.
 	ROLL_CHOICE,
-	## Pick one path for `model_id` within `budget` inches, or decline
-	## (MoveCommand, DeclineMoveCommand).
+	## An open move: `model_id` may move up to `budget` inches more, in one or
+	## more steps (MoveCommand), or finish it (DeclineMoveCommand). Unlike the
+	## others it does not hold the activation up: taking another action or
+	## ending the activation finishes it, and what is left is lost.
 	MOVE,
 }
 

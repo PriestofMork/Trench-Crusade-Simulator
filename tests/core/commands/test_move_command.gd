@@ -137,15 +137,15 @@ func test_allows_touching_bases() -> void:
 	assert_eq(state.execute(_move([Vector3(14 - 2 * r, 0, 10)])), "")
 
 
-func test_one_path_per_move_and_the_rest_is_lost() -> void:
+func test_steps_share_one_budget() -> void:
 	var command: MoveCommand = _move([Vector3(13, 0, 10), Vector3(13, 0, 12)])
 	assert_eq(state.execute(command), "")
 	assert_almost_eq(command.cost, 5.0, 0.0001)
 	assert_eq(state.last_events[0].kind, GameEvent.Kind.MODEL_MOVED)
 	assert_almost_eq(float(state.last_events[0].data["cost"]), 5.0, 0.0001)
-	assert_null(state.pending, "the move is answered")
-	var again: MoveCommand = MoveCommand.new(0, mover, [Vector3(13, 0, 13)])
-	assert_ne(state.execute(again), "", "no second path for the same Move")
+	assert_ne(state.execute(MoveCommand.new(0, mover, [Vector3(13, 0, 13.5)])), "", "1.5\" is more than is left")
+	assert_eq(state.execute(MoveCommand.new(0, mover, [Vector3(13, 0, 13)])), "")
+	assert_null(state.pending, "all used")
 	assert_ne(state.execute(BeginActionCommand.new(0, mover, &"move")), "", "Move once per activation")
 
 

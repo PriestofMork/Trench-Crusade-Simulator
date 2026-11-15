@@ -83,7 +83,7 @@ func test_the_move_after_a_dash_may_be_declined() -> void:
 	_rig(2, true, true)
 	_ok(BeginActionCommand.new(0, dasher, &"dash"))
 	var events: Array[GameEvent] = _ok(DeclineMoveCommand.new(0))
-	assert_eq(events[0].kind, GameEvent.Kind.MOVE_DECLINED)
+	assert_eq(events[0].kind, GameEvent.Kind.MOVE_FINISHED)
 	assert_null(state.pending)
 	assert_eq(state.turn.active_model_id, dasher)
 

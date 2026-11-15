@@ -1,6 +1,6 @@
 class_name DeclineMoveCommand
 extends Command
-## Answers a pending MOVE by staying put; the granted move is lost.
+## Finishes an open move (the Finish move button); what is left is lost.
 
 var player: int
 
@@ -14,6 +14,6 @@ func validate(state: GameState) -> String:
 
 
 func apply(state: GameState) -> Array[GameEvent]:
-	var model_id: int = state.pending.model_id
-	state.pending = null
-	return [GameEvent.new(GameEvent.Kind.MOVE_DECLINED, player, model_id)]
+	var events: Array[GameEvent] = []
+	TurnFlow.finish_open_move(state, events, "finished by the player")
+	return events

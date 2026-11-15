@@ -18,14 +18,10 @@ func validate(state: GameState) -> String:
 	if model == null:
 		return "No model with id %d." % model_id
 	var pending: PendingDecision = state.pending
-	var moving: bool = (
-		pending != null and pending.kind == PendingDecision.Kind.MOVE and pending.model_id == model_id
-	)
-	if moving:
-		# Ending instead of choosing the move: the move is lost.
+	if pending != null and pending.kind == PendingDecision.Kind.MOVE and pending.model_id == model_id:
+		# An open move does not hold the activation up; what is left is lost.
 		if not pending.is_for(player):
 			return "That decision is player %d's." % (pending.player + 1)
-		return ""
 	return TurnFlow.activation_error(state, player, model)
 
 

@@ -26,6 +26,12 @@ var history: Array[Command] = []
 ## The events of the last command applied.
 var last_events: Array[GameEvent] = []
 
+## Undo (not a rule command; it sits beside the command log): the state
+## before each command applied since the game started, and the commands
+## undone, newest last, for redo.
+var _undo_snapshots: Array[GameSnapshot] = []
+var _redo_commands: Array[Command] = []
+
 var _next_model_id: int = 1
 var _next_terrain_id: int = 1
 ## The height field for the current terrain, built when first asked for.
@@ -58,9 +64,50 @@ func submit(command: Command) -> CommandResult:
 	if result.error != "":
 		last_events = []
 		return result
+	# Set-up and the start of the game are not undone: undo goes back to turn 1.
+	if turn.turn > 0:
+		_undo_snapshots.append(GameSnapshot.take(self))
+	_redo_commands.clear()
 	result.events = command.apply(self)
 	history.append(command)
 	last_events = result.events
+	return result
+
+
+func can_undo() -> bool:
+	return not _undo_snapshots.is_empty()
+
+
+func can_redo() -> bool:
+	return not _redo_commands.is_empty()
+
+
+## Takes the last command back, restoring the state before it, dice included,
+## so doing the same again rolls the same. Returns false if there is nothing
+## to undo.
+func undo() -> bool:
+	if _undo_snapshots.is_empty():
+		return false
+	var command: Command = history[history.size() - 1]
+	var redo_stack: Array[Command] = _redo_commands.duplicate()
+	_undo_snapshots.pop_back().restore(self)
+	redo_stack.append(command)
+	_redo_commands = redo_stack
+	last_events = []
+	return true
+
+
+## Applies the last undone command again (it rolls the same dice). Returns its
+## result, with an error if there is nothing to redo.
+func redo() -> CommandResult:
+	if _redo_commands.is_empty():
+		var nothing: CommandResult = CommandResult.new()
+		nothing.error = "Nothing to redo."
+		return nothing
+	var redo_stack: Array[Command] = _redo_commands.duplicate()
+	var command: Command = redo_stack.pop_back()
+	var result: CommandResult = submit(command)
+	_redo_commands = redo_stack
 	return result
 
 

@@ -20,3 +20,12 @@ func roll(count: int) -> Array[int]:
 	for i: int in count:
 		results.append(roll_d6())
 	return results
+
+
+## The generator's position in its sequence, for undo snapshots.
+func get_state() -> int:
+	return _rng.state
+
+
+func set_state(value: int) -> void:
+	_rng.state = value

@@ -55,6 +55,8 @@ func test_selecting_is_not_activating_the_first_action_is() -> void:
 func test_an_active_model_blocks_the_others() -> void:
 	_ok(BeginActionCommand.new(0, a1, &"move"))
 	_ok(MoveCommand.new(0, a1, [Vector3(12, 0, 14)]))
+	assert_ne(state.execute(BeginActionCommand.new(0, a2, &"move")), "", "a1's move is open")
+	_ok(DeclineMoveCommand.new(0))
 	assert_ne(state.execute(BeginActionCommand.new(0, a2, &"move")), "")
 	assert_ne(state.execute(EndActivationCommand.new(0, a2)), "")
 	_ok(EndActivationCommand.new(0, a1))
@@ -65,7 +67,6 @@ func test_each_action_once_and_one_move_action() -> void:
 	# A second move action, registered for the test, is refused after Move.
 	state.rules.add_action(ActionDef.new(&"test_retreat", "Retreat", true, false, MoveBehaviour.new()))
 	_ok(BeginActionCommand.new(0, a1, &"move"))
-	assert_ne(state.execute(BeginActionCommand.new(0, a1, &"dash")), "", "the move is still to be chosen")
 	_ok(DeclineMoveCommand.new(0))
 	assert_ne(state.execute(BeginActionCommand.new(0, a1, &"move")), "", "Move once")
 	var reason: String = BeginActionCommand.unavailable_reason(state, state.get_model(a1), &"test_retreat")
@@ -77,15 +78,43 @@ func test_unknown_action_is_rejected() -> void:
 	assert_ne(state.execute(BeginActionCommand.new(0, a1, &"fly")), "")
 
 
-func test_a_move_is_one_path_within_the_budget() -> void:
+func test_a_move_may_be_made_in_steps_within_the_budget() -> void:
 	_ok(BeginActionCommand.new(0, a1, &"move"))
 	assert_ne(state.execute(MoveCommand.new(0, a1, [Vector3(18.5, 0, 10)])), "", "8.5\" is too far")
-	var events: Array[GameEvent] = _ok(MoveCommand.new(0, a1, [Vector3(12, 0, 10)]))
-	assert_eq(events[0].kind, GameEvent.Kind.MODEL_MOVED)
+	var events: Array[GameEvent] = _ok(MoveCommand.new(0, a1, [Vector3(10, 0, 13)]))
+	assert_eq(GameEvent.kinds(events), [GameEvent.Kind.MODEL_MOVED, GameEvent.Kind.DECISION_NEEDED] as Array[GameEvent.Kind])
 	var path: Array = events[0].data["path"]
 	assert_eq(path[0], Vector3(10, 0, 10), "the path starts where the model was")
-	assert_eq(path[path.size() - 1], Vector3(12, 0, 10))
-	assert_ne(state.execute(MoveCommand.new(0, a1, [Vector3(13, 0, 10)])), "", "the rest is lost")
+	assert_eq(path[path.size() - 1], Vector3(10, 0, 13))
+	assert_almost_eq(float(events[0].data["left"]), 5.0, 0.0001)
+	assert_almost_eq(state.pending.budget, 5.0, 0.0001, "the move stays open with what is left")
+	_ok(MoveCommand.new(0, a1, [Vector3(10, 0, 17)]))
+	assert_almost_eq(state.pending.budget, 1.0, 0.0001)
+	assert_ne(state.execute(MoveCommand.new(0, a1, [Vector3(10, 0, 19)])), "", "a third step beyond the budget")
+	_ok(MoveCommand.new(0, a1, [Vector3(10, 0, 18)]))
+	assert_null(state.pending, "nothing left: the move is finished")
+
+
+func test_starting_dash_finishes_the_move_and_loses_the_rest() -> void:
+	_ok(BeginActionCommand.new(0, a1, &"move"))
+	_ok(MoveCommand.new(0, a1, [Vector3(10, 0, 12)]))
+	var events: Array[GameEvent] = _ok(BeginActionCommand.new(0, a1, &"dash"))
+	assert_eq(events[0].kind, GameEvent.Kind.MOVE_FINISHED)
+	assert_almost_eq(float(events[0].data["left"]), 6.0, 0.0001, "6\" lost")
+	assert_eq(events[1].kind, GameEvent.Kind.ACTION_STARTED, "no second activation start")
+	if state.pending != null and state.pending.kind == PendingDecision.Kind.MOVE:
+		assert_eq(state.pending.action_id, &"dash", "only the Dash's own move is open")
+		assert_almost_eq(state.pending.budget, 8.0, 0.0001)
+	assert_ne(state.execute(MoveCommand.new(0, a1, [Vector3(10, 0, 30)])), "")
+
+
+func test_ending_the_activation_finishes_an_open_move() -> void:
+	_ok(BeginActionCommand.new(0, a1, &"move"))
+	_ok(MoveCommand.new(0, a1, [Vector3(10, 0, 12)]))
+	var events: Array[GameEvent] = _ok(EndActivationCommand.new(0, a1))
+	assert_eq(events[0].kind, GameEvent.Kind.MOVE_FINISHED)
+	assert_eq(events[1].kind, GameEvent.Kind.ACTIVATION_ENDED)
+	assert_null(state.pending)
 
 
 func test_ending_early_and_without_acting() -> void:
@@ -126,6 +155,7 @@ func test_a_down_model_stands_up_and_moves_half() -> void:
 	assert_false(state.get_model(a1).down)
 	assert_true(state.turn.stood_up)
 	assert_eq(state.pending.budget, 4.0)
+	assert_eq(TurnFlow.movement_budget(state, state.get_model(a1), 3.0), 1.5, "any extra movement is halved too")
 	assert_ne(state.execute(MoveCommand.new(0, a1, [Vector3(14.5, 0, 14)])), "", "more than 4\"")
 	_ok(MoveCommand.new(0, a1, [Vector3(10, 0, 14)]))
 
