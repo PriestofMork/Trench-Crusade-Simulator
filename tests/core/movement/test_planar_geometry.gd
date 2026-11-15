@@ -97,3 +97,58 @@ func test_swept_circle_within_point() -> void:
 	assert_true(PlanarGeometry.swept_circle_within(a, b, Vector2(5, 1.9), 2.0))
 	assert_false(PlanarGeometry.swept_circle_within(a, b, Vector2(5, 2.0), 2.0), "exactly at the limit")
 	assert_false(PlanarGeometry.swept_circle_within(a, b, Vector2(13, 0), 2.0))
+
+
+func test_clip_polygon_keeps_the_positive_side() -> void:
+	var square: PackedVector2Array = PlanarGeometry.rect_polygon(Vector2.ZERO, Vector2(1, 1), 0.0)
+	var half: PackedVector2Array = PlanarGeometry.clip_polygon(square, Vector2(1, 0), -0.5)
+	assert_almost_eq(absf(PlanarGeometry.polygon_double_area(half)) / 2.0, 1.0, EPS)
+	var none: PackedVector2Array = PlanarGeometry.clip_polygon(square, Vector2(1, 0), -2.0)
+	assert_eq(none.size(), 0)
+
+
+func test_point_polygon_signed_distance() -> void:
+	var rect: PackedVector2Array = PlanarGeometry.rect_polygon(Vector2(2, 3), Vector2(2, 1), 0.0)
+	assert_almost_eq(PlanarGeometry.point_polygon_signed_distance(Vector2(2, 3), rect), -1.0, EPS)
+	assert_almost_eq(PlanarGeometry.point_polygon_signed_distance(Vector2(5, 3), rect), 1.0, EPS)
+	assert_almost_eq(PlanarGeometry.point_polygon_signed_distance(Vector2(7, 8), rect), 5.0, EPS)
+	assert_almost_eq(PlanarGeometry.point_polygon_signed_distance(Vector2(4, 3), rect), 0.0, EPS)
+	# Same rectangle with its corners the other way round.
+	rect.reverse()
+	assert_almost_eq(PlanarGeometry.point_polygon_signed_distance(Vector2(2, 3), rect), -1.0, EPS)
+	# A turned one agrees with the rectangle formula.
+	var turned: PackedVector2Array = PlanarGeometry.rect_polygon(Vector2(1, 1), Vector2(2, 0.5), 0.7)
+	for p: Vector2 in [Vector2(0, 0), Vector2(3, 1), Vector2(1.2, 0.9), Vector2(-2, 4)]:
+		assert_almost_eq(
+			PlanarGeometry.point_polygon_signed_distance(p, turned),
+			PlanarGeometry.point_rect_signed_distance(p, Vector2(1, 1), Vector2(2, 0.5), 0.7), EPS
+		)
+
+
+func test_segment_polygon_distance() -> void:
+	var rect: PackedVector2Array = PlanarGeometry.rect_polygon(Vector2(0, 0), Vector2(1, 1), 0.0)
+	assert_almost_eq(PlanarGeometry.segment_polygon_distance(Vector2(-3, 0), Vector2(3, 0), rect), 0.0, EPS)
+	assert_almost_eq(PlanarGeometry.segment_polygon_distance(Vector2(-3, 2), Vector2(3, 2), rect), 1.0, EPS)
+	assert_almost_eq(PlanarGeometry.segment_polygon_distance(Vector2(2, -3), Vector2(2, 3), rect), 1.0, EPS)
+	assert_almost_eq(PlanarGeometry.segment_polygon_distance(Vector2(0.2, 0.2), Vector2(0.5, 0.5), rect), 0.0, EPS)
+
+
+func test_circle_polygon_area_is_exact() -> void:
+	var r: float = 0.63
+	var full: float = PI * r * r
+	var big: PackedVector2Array = PlanarGeometry.rect_polygon(Vector2.ZERO, Vector2(5, 5), 0.3)
+	assert_almost_eq(PlanarGeometry.circle_polygon_area(Vector2(0.4, -1), r, big), full, 1e-6)
+	# Centred exactly on a straight edge: exactly half, at any turn.
+	for turn: float in [0.0, 0.4, 1.1]:
+		var rect: PackedVector2Array = PlanarGeometry.rect_polygon(Vector2.ZERO, Vector2(3, 3), turn)
+		var on_edge: Vector2 = PlanarGeometry.from_rect_local(Vector2(3, 0.7), Vector2.ZERO, turn)
+		assert_almost_eq(PlanarGeometry.circle_polygon_area(on_edge, r, rect), full / 2.0, 1e-6)
+		var on_corner: Vector2 = PlanarGeometry.from_rect_local(Vector2(3, 3), Vector2.ZERO, turn)
+		assert_almost_eq(PlanarGeometry.circle_polygon_area(on_corner, r, rect), full / 4.0, 1e-6)
+	# A strip narrower than the circle: compare with the circular segment formula.
+	var strip: PackedVector2Array = PlanarGeometry.rect_polygon(Vector2.ZERO, Vector2(10, 0.2), 0.0)
+	var d: float = 0.2 / r
+	var expected: float = 2.0 * r * r * (asin(d) + d * sqrt(1.0 - d * d))
+	assert_almost_eq(PlanarGeometry.circle_polygon_area(Vector2.ZERO, r, strip), expected, 1e-6)
+	# Far away: nothing.
+	assert_almost_eq(PlanarGeometry.circle_polygon_area(Vector2(9, 9), r, strip), 0.0, 1e-6)

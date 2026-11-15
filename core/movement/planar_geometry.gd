@@ -119,3 +119,153 @@ static func _segment_hits_local_box(a: Vector2, b: Vector2, h: Vector2) -> bool:
 			if t0 > t1:
 				return false
 	return true
+
+
+# Convex polygons. A polygon is a PackedVector2Array of corners in order, either
+# way round, without repeating the first corner. Fewer than three corners (or
+# no area) is a degenerate polygon: a segment or a point, with no inside.
+
+
+## Corners of an oriented rectangle, in order.
+static func rect_polygon(center: Vector2, half_extents: Vector2, rotation: float) -> PackedVector2Array:
+	var hx: float = half_extents.x
+	var hy: float = half_extents.y
+	var polygon: PackedVector2Array = PackedVector2Array()
+	for local: Vector2 in [Vector2(-hx, -hy), Vector2(hx, -hy), Vector2(hx, hy), Vector2(-hx, hy)]:
+		polygon.append(from_rect_local(local, center, rotation))
+	return polygon
+
+
+## The part of a convex polygon where normal.dot(q) + offset >= 0.
+static func clip_polygon(polygon: PackedVector2Array, normal: Vector2, offset: float) -> PackedVector2Array:
+	var result: PackedVector2Array = PackedVector2Array()
+	var n: int = polygon.size()
+	for i: int in n:
+		var a: Vector2 = polygon[i]
+		var b: Vector2 = polygon[(i + 1) % n]
+		var fa: float = normal.dot(a) + offset
+		var fb: float = normal.dot(b) + offset
+		if fa >= 0.0:
+			result.append(a)
+		if (fa >= 0.0) != (fb >= 0.0):
+			result.append(a.lerp(b, fa / (fa - fb)))
+	return result
+
+
+## Twice the signed area: positive when the corners run counter-clockwise in (x, z).
+static func polygon_double_area(polygon: PackedVector2Array) -> float:
+	var total: float = 0.0
+	var n: int = polygon.size()
+	for i: int in n:
+		total += polygon[i].cross(polygon[(i + 1) % n])
+	return total
+
+
+## Signed distance from p to a convex polygon: positive outside, negative inside.
+static func point_polygon_signed_distance(p: Vector2, polygon: PackedVector2Array) -> float:
+	var n: int = polygon.size()
+	if n == 0:
+		return INF
+	if n == 1:
+		return p.distance_to(polygon[0])
+	var area: float = polygon_double_area(polygon)
+	var outside: float = INF
+	var inside: float = INF
+	var is_inside: bool = absf(area) > 1e-12
+	var orientation: float = signf(area)
+	for i: int in n:
+		var a: Vector2 = polygon[i]
+		var b: Vector2 = polygon[(i + 1) % n]
+		outside = minf(outside, point_segment_distance(p, a, b))
+		if is_inside:
+			var edge: Vector2 = b - a
+			var length: float = edge.length()
+			if length <= 1e-12:
+				continue
+			# Distance to the edge line, positive on the inner side.
+			var d: float = orientation * edge.cross(p - a) / length
+			if d < 0.0:
+				is_inside = false
+			else:
+				inside = minf(inside, d)
+	if is_inside:
+		return -inside
+	return outside
+
+
+## Shortest distance between segment a-b and a convex polygon; 0 if they touch.
+static func segment_polygon_distance(a: Vector2, b: Vector2, polygon: PackedVector2Array) -> float:
+	var n: int = polygon.size()
+	if n == 0:
+		return INF
+	var best: float = minf(
+		maxf(point_polygon_signed_distance(a, polygon), 0.0),
+		maxf(point_polygon_signed_distance(b, polygon), 0.0)
+	)
+	if best <= 0.0:
+		return 0.0
+	for i: int in n:
+		var c: Vector2 = polygon[i]
+		var d: Vector2 = polygon[(i + 1) % n]
+		if segments_intersect(a, b, c, d):
+			return 0.0
+		best = minf(best, point_segment_distance(c, a, b))
+	return best
+
+
+static func segments_intersect(a: Vector2, b: Vector2, c: Vector2, d: Vector2) -> bool:
+	var ab: Vector2 = b - a
+	var cd: Vector2 = d - c
+	var d1: float = ab.cross(c - a)
+	var d2: float = ab.cross(d - a)
+	var d3: float = cd.cross(a - c)
+	var d4: float = cd.cross(b - c)
+	if ((d1 > 0.0 and d2 < 0.0) or (d1 < 0.0 and d2 > 0.0)) and ((d3 > 0.0 and d4 < 0.0) or (d3 < 0.0 and d4 > 0.0)):
+		return true
+	return false
+
+
+## Exact area of the overlap of a circle and a convex polygon.
+static func circle_polygon_area(center: Vector2, radius: float, polygon: PackedVector2Array) -> float:
+	var n: int = polygon.size()
+	if n < 3:
+		return 0.0
+	var total: float = 0.0
+	for i: int in n:
+		total += _circle_triangle_signed_area(polygon[i] - center, polygon[(i + 1) % n] - center, radius)
+	return absf(total)
+
+
+## Signed area of the overlap of the circle (origin, r) and the triangle (origin, a, b).
+static func _circle_triangle_signed_area(a: Vector2, b: Vector2, r: float) -> float:
+	var r2: float = r * r
+	var la2: float = a.length_squared()
+	var lb2: float = b.length_squared()
+	if la2 <= r2 and lb2 <= r2:
+		return a.cross(b) * 0.5
+	var d: Vector2 = b - a
+	var qa: float = d.length_squared()
+	if qa <= 1e-18:
+		return 0.0
+	var qb: float = a.dot(d)
+	var qc: float = la2 - r2
+	var disc: float = qb * qb - qa * qc
+	if disc <= 0.0:
+		return _sector(a, b, r2)
+	var s: float = sqrt(disc)
+	var t1: float = (-qb - s) / qa
+	var t2: float = (-qb + s) / qa
+	if t2 <= 0.0 or t1 >= 1.0:
+		return _sector(a, b, r2)
+	var p1: Vector2 = a + d * maxf(t1, 0.0)
+	var p2: Vector2 = a + d * minf(t2, 1.0)
+	var area: float = p1.cross(p2) * 0.5
+	if la2 > r2:
+		area += _sector(a, p1, r2)
+	if lb2 > r2:
+		area += _sector(p2, b, r2)
+	return area
+
+
+static func _sector(u: Vector2, v: Vector2, r2: float) -> float:
+	return 0.5 * r2 * atan2(u.cross(v), u.dot(v))
