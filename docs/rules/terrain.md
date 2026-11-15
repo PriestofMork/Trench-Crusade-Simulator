@@ -53,8 +53,15 @@ top it is climbing to.
 
 ## Going down
 
-- A drop of less than 3" is a free jump down with no effect.
-- A drop of 3" or more is handled in `movement.md` (jump down and fall, or climb down).
+- **Drop of less than 3":** a free hop down with no effect.
+- **Drop of 3" or more,** the model chooses:
+  - **Drop:** costs no movement, but counts as falling. Make the injury roll (see
+    `movement.md`); if the model survives standing it may carry on moving, and if it
+    goes Down its activation ends.
+  - **Climb down a ladder** (a face tagged Ladder): no roll; pays the height, the
+    same as going up.
+  - **Climb down a sheer surface:** a risky climb roll, paying the height, as for
+    climbing up. (Assumed, from the general climbing rule.)
 
 ## Where a model can be
 
@@ -62,7 +69,8 @@ top it is climbing to.
 - The centre of the base must be over the floor the model is moving on.
 - The base may overhang a drop freely.
 - The base may not overlap terrain higher than its floor, except the wall it is
-  climbing at that moment. (Assumed.)
+  climbing at that moment. A model on the ground cannot stand partly inside a
+  sandbag or any other obstacle.
 - So a model can climb at a corner or cross a narrow beam, even where it could not
   stop.
 
@@ -78,8 +86,4 @@ top it is climbing to.
 
 ## Open questions
 
-1. May a base on the ground overlap a low obstacle next to it (for example sandbags
-   under the rim of the base)? (Assumed: no.)
-2. Climbing down a wall of 3" or more instead of jumping: allowed, paying the height,
-   with a roll only if the wall is sheer? (Assumed: yes.)
-3. Difficult and dangerous terrain.
+1. Difficult and dangerous terrain.

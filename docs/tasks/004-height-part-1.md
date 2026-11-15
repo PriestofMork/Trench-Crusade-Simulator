@@ -48,7 +48,8 @@ and what it costs. In this brief:
 | Up a wall of any height on a piece tagged ladder | yes | horizontal distance + wall height |
 | Up a higher wall, or one tagged sheer | no (part 2) | |
 | Down a drop of less than 3" | yes | horizontal distance only |
-| Down a drop of 3" or more | no (part 2) | |
+| Down a wall of any height on a piece tagged ladder | yes | horizontal distance + wall height |
+| Down any other drop of 3" or more | no (part 2) | |
 | Across a gap with no floor | no (part 2) | |
 
 - Going up a wall, the model arrives on top directly above the point where its base
@@ -112,7 +113,7 @@ and what it costs. In this brief:
   around on top of the crate after starting there costs no surcharge.
 - Reach field: the platform is reachable by the ramp and by the 2" wall, at different
   costs; the 4" block top is never reachable; the tower top is reachable only by the
-  ladder face; a climb through a corner is used as a route but the corner is not a
+  ladder face, and a model on the tower top can get down only by the ladder face; a climb through a corner is used as a route but the corner is not a
   destination; a point under the bridge and the point above it are separate
   destinations; the consistency test passes on the test table.
 - All existing tests still pass, adapted to 3D positions where needed.
