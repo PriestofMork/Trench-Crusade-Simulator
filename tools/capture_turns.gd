@@ -47,9 +47,26 @@ func _run() -> void:
 	await _shot("02_model1_selected_move_preview")
 	_main.set_hover_override(null)
 	await _frames(2)
+	# A Move in two steps: first onto the ramp, then on with what is left.
+	_click_world(Vector3(7.5, 0.83, 14))
+	await _reach()
+	_main.set_hover_override(Vector3(11.8, 2, 14))
+	await _shot("03_model1_first_step_indicator_shows_rest")
+	print("after step 1: %.2f\" left" % state.pending.budget)
+	_main.set_hover_override(null)
+	await _frames(2)
 	_click_world(Vector3(11.8, 2, 14))
 	await _idle()
-	await _shot("03_model1_moved_move_greyed")
+	await _shot("03b_model1_second_step_move_greyed")
+	# Undo the second step with Ctrl+Z: the model and its distance come back.
+	_key(KEY_Z)
+	await _reach()
+	await _shot("03c_undo_gives_the_step_back")
+	print("after undo: at %s, %.2f\" left" % [state.get_model(1).position, state.pending.budget])
+	_key(KEY_Y)
+	await _idle()
+	await _shot("03d_redo")
+	print("after redo: at %s" % state.get_model(1).position)
 	_press("EndActivationButton")
 	await _idle()
 	await _shot("04_model1_done_player2_to_act")
@@ -207,6 +224,18 @@ func _click_world(point: Vector3) -> void:
 	event.pressed = true
 	root.push_input(event)
 	var release: InputEventMouseButton = event.duplicate()
+	release.pressed = false
+	root.push_input(release)
+
+
+func _key(keycode: Key) -> void:
+	var event: InputEventKey = InputEventKey.new()
+	event.physical_keycode = keycode
+	event.keycode = keycode
+	event.ctrl_pressed = true
+	event.pressed = true
+	root.push_input(event)
+	var release: InputEventKey = event.duplicate()
 	release.pressed = false
 	root.push_input(release)
 

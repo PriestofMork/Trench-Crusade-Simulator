@@ -9,6 +9,8 @@ signal end_activation_pressed
 signal stay_pressed
 signal first_player_chosen(first: int)
 signal roll_off_pressed
+signal undo_pressed
+signal redo_pressed
 
 var _turn_label: RichTextLabel
 var _decision_label: RichTextLabel
@@ -24,6 +26,8 @@ var _prompt_buttons: HBoxContainer
 var _message: RichTextLabel
 var _help: Label
 var _action_buttons: Dictionary[StringName, Button] = {}
+var _undo_button: Button
+var _redo_button: Button
 
 
 func _init() -> void:
@@ -43,6 +47,15 @@ func _init() -> void:
 	status_box.add_child(_turn_label)
 	_decision_label = UiStyle.rich(16)
 	status_box.add_child(_decision_label)
+	var history_row: HBoxContainer = HBoxContainer.new()
+	history_row.add_theme_constant_override("separation", 6)
+	status_box.add_child(history_row)
+	_undo_button = UiStyle.button("Undo (Ctrl+Z)", "UndoButton")
+	_undo_button.pressed.connect(func() -> void: undo_pressed.emit())
+	history_row.add_child(_undo_button)
+	_redo_button = UiStyle.button("Redo (Ctrl+Y)", "RedoButton")
+	_redo_button.pressed.connect(func() -> void: redo_pressed.emit())
+	history_row.add_child(_redo_button)
 
 	_model_panel = PanelContainer.new()
 	_model_panel.name = "ModelPanel"
@@ -60,7 +73,8 @@ func _init() -> void:
 	_actions_box.name = "Actions"
 	_actions_box.add_theme_constant_override("separation", 6)
 	model_box.add_child(_actions_box)
-	_stay_button = UiStyle.button("Stay (skip move)", "StayButton")
+	_stay_button = UiStyle.button("Finish move", "StayButton")
+	_stay_button.tooltip_text = "End the move here; movement left over is lost"
 	_stay_button.pressed.connect(func() -> void: stay_pressed.emit())
 	model_box.add_child(_stay_button)
 	_end_button = UiStyle.button("End activation", "EndActivationButton")
@@ -128,6 +142,10 @@ func press(button_name: String) -> bool:
 
 func _refresh_status(state: GameState) -> void:
 	var t: TurnState = state.turn
+	_undo_button.disabled = not state.can_undo()
+	_redo_button.disabled = not state.can_redo()
+	_undo_button.tooltip_text = "Take back the last step (back to the start of turn 1)"
+	_redo_button.tooltip_text = "Do the last undone step again (same dice)"
 	_turn_label.text = "[b]Turn %d[/b]" % t.turn if t.turn > 0 else "[b]Set-up[/b]"
 	var pending: PendingDecision = state.pending
 	if pending != null:

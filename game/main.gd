@@ -6,7 +6,9 @@ extends Node3D
 ##
 ## Left click a model: select it (a preview; the activation starts with its
 ## first action). Left click inside the blue area: take the Move action there
-## (or make the move a Dash granted). Escape: deselect. O: override panel.
+## (or make the move a Dash granted); a move may be made in several clicks
+## while it has distance left. Escape: deselect. O: override panel.
+## Ctrl+Z / Ctrl+Y: undo / redo (also HUD buttons).
 ## While the dice tumble, a click or a key skips to the result.
 
 const TABLE_THICKNESS: float = 1.0
@@ -87,7 +89,14 @@ func _unhandled_input(event: InputEvent) -> void:
 		if _tray.is_animating():
 			_tray.skip()
 			return
-		if key.physical_keycode == KEY_ESCAPE:
+		if key.ctrl_pressed and key.physical_keycode == KEY_Z:
+			if key.shift_pressed:
+				redo()
+			else:
+				undo()
+		elif key.ctrl_pressed and key.physical_keycode == KEY_Y:
+			redo()
+		elif key.physical_keycode == KEY_ESCAPE:
 			deselect()
 		elif key.physical_keycode == KEY_O:
 			toggle_overrides()
@@ -192,6 +201,61 @@ func answer_roll_choice(amount: int) -> String:
 	if state.pending == null:
 		return "Nothing to answer."
 	return send(RollChoiceCommand.new(state.pending.player, amount))
+
+
+## Takes the last step back (not a rule command: core restores its snapshot).
+## The views are brought back in line with the restored state.
+func undo() -> String:
+	if _tray.is_animating():
+		_tray.skip()
+	if is_busy():
+		return "Wait for the move to finish."
+	_wait_for_reach_task()
+	if not state.undo():
+		_hud.show_message("Nothing to undo.")
+		return "Nothing to undo."
+	_after_restore("Undone.")
+	return ""
+
+
+## Does the last undone step again; it plays back like any command.
+func redo() -> String:
+	if _tray.is_animating():
+		_tray.skip()
+	if is_busy():
+		return "Wait for the move to finish."
+	_wait_for_reach_task()
+	if not state.can_redo():
+		_hud.show_message("Nothing to redo.")
+		return "Nothing to redo."
+	var result: CommandResult = state.redo()
+	if not result.ok():
+		_hud.show_message(result.error)
+		return result.error
+	_hud.show_message("Redone.")
+	_queue.append_array(result.events)
+	_pump()
+	return ""
+
+
+func _after_restore(message: String) -> void:
+	_clear_reach()
+	_tray.close()
+	# A restored roll waiting on a marker prompt shows it again.
+	var pending: PendingDecision = state.pending
+	if state.active_roll != null:
+		_tray.begin(state.active_roll)
+		if pending != null and pending.kind == PendingDecision.Kind.ROLL_CHOICE:
+			_tray.ask_choice(pending)
+	_hud.show_message(message)
+	_refresh_all()
+
+
+func _wait_for_reach_task() -> void:
+	if _reach_task != -1:
+		WorkerThreadPool.wait_for_task_completion(_reach_task)
+		_reach_task = -1
+		_built_field = null
 
 
 func toggle_overrides() -> void:
@@ -582,6 +646,8 @@ func _build_overlays() -> void:
 	_hud.stay_pressed.connect(func() -> void: stay())
 	_hud.first_player_chosen.connect(func(first: int) -> void: choose_first_player(first))
 	_hud.roll_off_pressed.connect(func() -> void: roll_off())
+	_hud.undo_pressed.connect(func() -> void: undo())
+	_hud.redo_pressed.connect(func() -> void: redo())
 
 	_tray = DiceTray.new()
 	_tray.custom_minimum_size = Vector2(TRAY_WIDTH, 0)
