@@ -1,0 +1,15 @@
+# Godot engine executables (local copy, not part of the project)
+/Godot/
+
+# Godot
+.godot/
+*.translation
+export_presets.cfg
+/build/
+
+# Third-party / copyrighted assets (models, TTS rips). Never commit while the repo is public.
+assets/private/
+
+# OS
+Thumbs.db
+.DS_Store
