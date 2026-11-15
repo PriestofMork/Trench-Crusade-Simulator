@@ -7,7 +7,8 @@ extends RefCounted
 ## reach (clipped to the table). The model's own position is exactly a node. A
 ## node is standable if the base may stand there; a shortest-path search with
 ## 16 neighbours runs over standable nodes, and a step is taken only if the base
-## swept along it is legal. All checks are MoveLegality, the same ones
+## swept along it is legal. The search is any-angle (Lazy Theta*, see _search()),
+## so distances in the open are straight-line distances. All checks are MoveLegality, the same ones
 ## MoveCommand uses, so every path returned here is a path MoveCommand accepts.
 ## Grid paths are never shorter than the straight line, so the field is a little
 ## conservative, never optimistic.
@@ -17,6 +18,9 @@ const CELL_SIZE: float = 0.25
 ## interpolate smoothly at its edge. They are never reported as reachable.
 const MARGIN_CELLS: int = 3
 const EPSILON: float = 0.0001
+## Clearance is only needed near obstacles (for the step shortcut and the outline),
+## so it is capped here to skip far obstacles. Must stay above the longest step.
+const CLEARANCE_CAP: float = 2.0
 const NO_NODE: int = -1
 
 ## Neighbour steps: 4 straight, 4 diagonal and 8 knight's moves.
@@ -41,6 +45,8 @@ var _legality: MoveLegality
 var _start_2d: Vector2
 var _start_node: int = NO_NODE
 var _clearance: PackedFloat64Array = PackedFloat64Array()
+## Table position of every node, cached because the search reads them constantly.
+var _positions: PackedVector2Array = PackedVector2Array()
 var _cost: PackedFloat64Array = PackedFloat64Array()
 var _parent: PackedInt32Array = PackedInt32Array()
 
@@ -183,12 +189,22 @@ func _build_grid(state: GameState) -> void:
 
 
 func _compute_clearance() -> void:
-	_clearance.resize(node_count())
-	for i: int in node_count():
-		_clearance[i] = _legality.clearance(node_position_2d(i))
+	var count: int = node_count()
+	_positions.resize(count)
+	_clearance.resize(count)
+	for i: int in count:
+		var p: Vector2 = origin + Vector2(i % size_x, i / size_x) * cell_size
+		_positions[i] = p
+		_clearance[i] = _legality.clearance(p, CLEARANCE_CAP)
 
 
 func _search() -> void:
+	# Lazy Theta*: a node first takes its neighbour's parent as its own (a straight
+	# line from further back), and that line is checked when the node is expanded.
+	# If the line is not legal, the node falls back to its best grid neighbour.
+	# Distances are then true straight-line lengths wherever the way is open, so
+	# the area's edge is round rather than a 16-sided polygon. Every parent link
+	# of an expanded node has passed the same legality check MoveCommand uses.
 	var count: int = node_count()
 	_cost.resize(count)
 	_cost.fill(INF)
@@ -210,13 +226,19 @@ func _search() -> void:
 		var node: int = _heap_pop()
 		if done[node] == 1 or cost > _cost[node]:
 			continue
+		if node != _start_node and not _confirm_parent(node, done, step_lengths):
+			done[node] = 1
+			continue
 		done[node] = 1
-		if cost > limit:
+		if _cost[node] > limit:
 			break
 		var ix: int = node % size_x
 		var iz: int = node / size_x
-		var here: Vector2 = node_position_2d(node)
+		var here: Vector2 = _positions[node]
 		var here_clearance: float = _clearance[node]
+		var via: int = node if node == _start_node else _parent[node]
+		var via_position: Vector2 = _positions[via]
+		var via_cost: float = _cost[via]
 		for s: int in _STEPS.size():
 			var nx: int = ix + _STEPS[s].x
 			var nz: int = iz + _STEPS[s].y
@@ -225,16 +247,56 @@ func _search() -> void:
 			var next: int = nz * size_x + nx
 			if done[next] == 1 or _clearance[next] < -EPSILON:
 				continue
-			var new_cost: float = cost + step_lengths[s]
+			var new_cost: float = via_cost + via_position.distance_to(_positions[next])
 			if new_cost >= _cost[next]:
 				continue
-			if not _step_is_legal(here, here_clearance, next, step_lengths[s]):
+			# The grid step itself must be legal, so the fallback always has one.
+			# (Clearance shortcut inlined from _step_is_legal() for speed.)
+			if (
+				minf(here_clearance, _clearance[next]) < step_lengths[s] * 0.5
+				and _legality.segment_result(here, _positions[next]) != MoveLegality.Result.OK
+			):
 				continue
 			_cost[next] = new_cost
-			_parent[next] = node
+			_parent[next] = via
 			_heap_push(new_cost, next)
 	_heap_cost.clear()
 	_heap_node.clear()
+
+
+## Checks the straight line from a node's parent. If it is not legal, re-parents
+## the node to its cheapest expanded grid neighbour with a legal step. Returns
+## false if there is none (cannot happen in practice: the node was reached by one).
+func _confirm_parent(node: int, done: PackedByteArray, step_lengths: PackedFloat64Array) -> bool:
+	var parent: int = _parent[node]
+	var here: Vector2 = _positions[node]
+	var from: Vector2 = _positions[parent]
+	var length: float = from.distance_to(here)
+	if minf(_clearance[parent], _clearance[node]) >= length * 0.5:
+		return true
+	if _legality.segment_result(from, here) == MoveLegality.Result.OK:
+		return true
+	var ix: int = node % size_x
+	var iz: int = node / size_x
+	var best_cost: float = INF
+	var best_parent: int = NO_NODE
+	for s: int in _STEPS.size():
+		var nx: int = ix + _STEPS[s].x
+		var nz: int = iz + _STEPS[s].y
+		if nx < 0 or nz < 0 or nx >= size_x or nz >= size_z:
+			continue
+		var other: int = nz * size_x + nx
+		if done[other] == 0:
+			continue
+		var candidate: float = _cost[other] + step_lengths[s]
+		if candidate >= best_cost:
+			continue
+		if _step_is_legal(here, _clearance[node], other, step_lengths[s]):
+			best_cost = candidate
+			best_parent = other
+	_cost[node] = best_cost
+	_parent[node] = best_parent
+	return best_parent != NO_NODE
 
 
 func _step_is_legal(here: Vector2, here_clearance: float, next: int, length: float) -> bool:
@@ -243,7 +305,7 @@ func _step_is_legal(here: Vector2, here_clearance: float, next: int, length: flo
 	# the whole step is legal without testing it.
 	if minf(here_clearance, _clearance[next]) >= length * 0.5:
 		return true
-	return _legality.segment_result(here, node_position_2d(next)) == MoveLegality.Result.OK
+	return _legality.segment_result(here, _positions[next]) == MoveLegality.Result.OK
 
 
 func _resolve(target: Vector2) -> void:

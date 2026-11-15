@@ -31,6 +31,10 @@ var _circle_is_enemy: Array[bool] = []
 var _rect_centres: PackedVector2Array = PackedVector2Array()
 var _rect_half_extents: PackedVector2Array = PackedVector2Array()
 var _rect_rotations: PackedFloat64Array = PackedFloat64Array()
+## Centre-to-corner distance plus the base radius: a quick reject for segments.
+var _rect_reach: PackedFloat64Array = PackedFloat64Array()
+var _rect_cos: PackedFloat64Array = PackedFloat64Array()
+var _rect_sin: PackedFloat64Array = PackedFloat64Array()
 
 
 func _init(state: GameState, model: ModelState) -> void:
@@ -53,6 +57,9 @@ func _init(state: GameState, model: ModelState) -> void:
 		_rect_centres.append(piece.footprint_center())
 		_rect_half_extents.append(piece.footprint_half_extents())
 		_rect_rotations.append(piece.rotation)
+		_rect_reach.append(piece.footprint_half_extents().length() + radius)
+		_rect_cos.append(cos(piece.rotation))
+		_rect_sin.append(sin(piece.rotation))
 
 
 ## Whether the base may stand with its centre at p.
@@ -77,6 +84,8 @@ func segment_result(a: Vector2, b: Vector2) -> Result:
 	if not _inside_table(a) or not _inside_table(b):
 		return Result.OFF_TABLE
 	for i: int in _rect_centres.size():
+		if PlanarGeometry.point_segment_distance(_rect_centres[i], a, b) >= _rect_reach[i]:
+			continue
 		if PlanarGeometry.swept_circle_overlaps_rect(
 			a, b, radius, _rect_centres[i], _rect_half_extents[i], _rect_rotations[i], EPSILON
 		):
@@ -92,16 +101,25 @@ func segment_result(a: Vector2, b: Vector2) -> Result:
 ## How far the centre at p is from the nearest illegal position: positive when
 ## legal, negative when illegal. It changes by at most the distance moved, so a
 ## segment whose ends both have clearance of at least half its length is legal.
-func clearance(p: Vector2) -> float:
+## Values above `cap` may be returned as `cap`, which lets far obstacles be skipped.
+func clearance(p: Vector2, cap: float = INF) -> float:
 	var best: float = minf(
-		minf(p.x - _centre_min.x, _centre_max.x - p.x),
-		minf(p.y - _centre_min.y, _centre_max.y - p.y)
+		minf(minf(p.x - _centre_min.x, _centre_max.x - p.x), minf(p.y - _centre_min.y, _centre_max.y - p.y)),
+		cap
 	)
 	for i: int in _rect_centres.size():
-		var d: float = PlanarGeometry.point_rect_signed_distance(
-			p, _rect_centres[i], _rect_half_extents[i], _rect_rotations[i]
-		)
-		best = minf(best, d - radius)
+		var d: Vector2 = p - _rect_centres[i]
+		# The box is no nearer than its centre minus its corner distance.
+		if d.length() - _rect_reach[i] >= best:
+			continue
+		# Inlined PlanarGeometry.point_rect_signed_distance(), with cached cos and sin.
+		var c: float = _rect_cos[i]
+		var s: float = _rect_sin[i]
+		var half: Vector2 = _rect_half_extents[i]
+		var qx: float = absf(d.x * c - d.y * s) - half.x
+		var qy: float = absf(d.x * s + d.y * c) - half.y
+		var outside: float = sqrt(maxf(qx, 0.0) * maxf(qx, 0.0) + maxf(qy, 0.0) * maxf(qy, 0.0))
+		best = minf(best, outside + minf(maxf(qx, qy), 0.0) - radius)
 	for i: int in _circle_centres.size():
 		best = minf(best, p.distance_to(_circle_centres[i]) - _circle_min_distances[i])
 	return best
