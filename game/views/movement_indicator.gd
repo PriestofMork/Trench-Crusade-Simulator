@@ -1,8 +1,9 @@
 class_name MovementIndicator
 extends MeshInstance3D
-## Draws where the selected model's base centre can move to, XCOM style: a crisp
+## Draws where the selected model's base edge can reach, XCOM style: a crisp
 ## blue outline with a soft glow on its inner side and a faint fill. Built from
-## a ReachField's contour values with marching squares, so the edge follows
+## a ReachField's contour values with marching squares (the centre's area grown
+## by the base radius), so the edge follows
 ## terrain, other models and the remaining movement smoothly instead of in steps.
 ## The contour values are roughly the distance in inches to the edge, so the
 ## glow is a gradient on the fill itself and stays even in corners and corridors.
@@ -35,9 +36,16 @@ func show_field(field: ReachField) -> void:
 	if field == null or field.node_count() == 0:
 		mesh = null
 		return
-	var contour: MarchingSquares.Contour = MarchingSquares.build(
-		field.contour_values(), field.size_x, field.size_z
+	# Contour where the centre may end, then grow it by the base radius: the
+	# area the base edge can touch. Values stay in inches for the glow.
+	var centre_values: PackedFloat32Array = field.contour_values()
+	var centre: MarchingSquares.Contour = MarchingSquares.build(centre_values, field.size_x, field.size_z)
+	var grown: PackedFloat32Array = MarchingSquares.grown_values(
+		centre_values, field.size_x, field.size_z, centre, field.base_radius() / field.cell_size
 	)
+	for k: int in grown.size():
+		grown[k] *= field.cell_size
+	var contour: MarchingSquares.Contour = MarchingSquares.build(grown, field.size_x, field.size_z)
 	var array_mesh: ArrayMesh = ArrayMesh.new()
 	_add_fill(array_mesh, contour, field)
 	_add_outline(array_mesh, contour, field)

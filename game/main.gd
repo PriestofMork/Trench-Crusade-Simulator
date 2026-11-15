@@ -2,7 +2,8 @@ extends Node3D
 ## Main scene: builds a GameState through commands, shows it, and turns clicks
 ## into commands. Never changes the state directly.
 ##
-## Left click a model: select it. Left click inside the blue area: move there.
+## Left click a model: select it. Left click inside the blue area: move so the
+## base reaches as far towards the click as it legally can.
 ## Left click elsewhere on the table or Escape: deselect.
 ## R: give the selected model its full movement back (temporary, until activations).
 
@@ -25,6 +26,7 @@ const STARTING_MODELS: Array[Dictionary] = [
 	{"player": 1, "at": Vector2(19, 28), "base": 50, "movement": 6.0},
 	{"player": 1, "at": Vector2(30, 26), "base": 32, "movement": 8.0},
 	{"player": 1, "at": Vector2(40, 36), "base": 60, "movement": 4.0},
+	{"player": 0, "at": Vector2(22, 19), "base": 25, "movement": 5.0},
 ]
 
 var state: GameState
@@ -181,9 +183,9 @@ func _on_left_click(screen_position: Vector2) -> void:
 		return
 	if _selected_id == -1:
 		return
-	var ground: Variant = _ground_point(screen_position)
-	if ground != null and _reach != null and _reach.is_reachable(ground):
-		move_selected_to(ground)
+	var destination: Variant = _destination_for(_ground_point(screen_position))
+	if destination != null:
+		move_selected_to(destination)
 	else:
 		deselect()
 
@@ -205,7 +207,11 @@ func _update_hover() -> void:
 		return
 	var target: Vector3 = point
 	var model: ModelState = state.get_model(_selected_id)
-	var path: Array[Vector3] = _reach.path_to(target)
+	var path: Array[Vector3] = []
+	var destination: Variant = _destination_for(point)
+	if destination != null:
+		target = destination
+		path = _reach.path_to(target)
 	_preview.show_preview(model.position, path, target, model.base_radius_inches())
 	if path.is_empty():
 		_distance_label.visible = false
@@ -213,6 +219,15 @@ func _update_hover() -> void:
 	_distance_label.text = "%.1f\"" % MoveCommand.path_length(model.position, path)
 	_distance_label.position = _camera.unproject_position(target) + Vector2(18, -34)
 	_distance_label.visible = true
+
+
+## Where the selected model's centre goes for a table point: the closest valid
+## centre within a base radius, since the indicator shows where the base edge
+## can reach. Null if there is none (or `point` is null).
+func _destination_for(point: Variant) -> Variant:
+	if point == null or _reach == null:
+		return null
+	return _reach.closest_destination(point, _reach.base_radius())
 
 
 ## The model under the screen position, or -1.

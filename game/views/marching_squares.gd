@@ -122,6 +122,47 @@ static func build(values: PackedFloat32Array, size_x: int, size_z: int) -> Conto
 	return contour
 
 
+## Values whose 0 contour is `contour`'s inside grown outwards by `distance`
+## (grid units): the signed distance to the outline, minus `distance`. Exact
+## distance to the outline segments, so the grown outline stays smooth and is
+## rounded at outside corners. `values` (what `contour` was built from) gives the
+## inside or outside. Far from the outline the magnitude is only a bound.
+static func grown_values(
+	values: PackedFloat32Array, size_x: int, size_z: int, contour: Contour, distance: float
+) -> PackedFloat32Array:
+	var band: float = distance + 2.0
+	var nearest: PackedFloat32Array = PackedFloat32Array()
+	nearest.resize(values.size())
+	nearest.fill(band)
+	for c: int in contour.chains.size():
+		var chain: PackedVector2Array = contour.chains[c]
+		var segment_count: int = chain.size() if contour.closed[c] else chain.size() - 1
+		for s: int in segment_count:
+			var a: Vector2 = chain[s]
+			var b: Vector2 = chain[(s + 1) % chain.size()]
+			var ab: Vector2 = b - a
+			var ab_length_squared: float = ab.length_squared()
+			var i_from: int = maxi(floori(minf(a.x, b.x) - band), 0)
+			var i_to: int = mini(ceili(maxf(a.x, b.x) + band), size_x - 1)
+			var j_from: int = maxi(floori(minf(a.y, b.y) - band), 0)
+			var j_to: int = mini(ceili(maxf(a.y, b.y) + band), size_z - 1)
+			for j: int in range(j_from, j_to + 1):
+				for i: int in range(i_from, i_to + 1):
+					var p: Vector2 = Vector2(i, j)
+					var t: float = 0.0
+					if ab_length_squared > 0.0:
+						t = clampf((p - a).dot(ab) / ab_length_squared, 0.0, 1.0)
+					var d: float = p.distance_to(a + ab * t)
+					var k: int = j * size_x + i
+					if d < nearest[k]:
+						nearest[k] = d
+	var grown: PackedFloat32Array = PackedFloat32Array()
+	grown.resize(values.size())
+	for k: int in values.size():
+		grown[k] = (-nearest[k] if values[k] <= 0.0 else nearest[k]) - distance
+	return grown
+
+
 static func _chain(
 	contour: Contour, points_by_key: Dictionary[int, Vector2], next_key: Dictionary[int, int]
 ) -> void:

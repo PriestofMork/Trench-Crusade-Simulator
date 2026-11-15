@@ -44,6 +44,42 @@ func _run() -> void:
 	_main.set_hover_override(Vector3(23.5, 0, 17.0))
 	await _shot("04_hover_outside")
 
+	# 4b. Hover behind the friendly model 7: the path runs straight through its base.
+	_look(camera, Vector3(20.5, 0, 19.5), 0.35, deg_to_rad(65), 16.0)
+	_main.set_hover_override(Vector3(23.6, 0, 18.6))
+	await _shot("04b_path_through_friend")
+
+	# 4c. Hover on model 7's centre: outside the area (friendly bases are holes
+	# in it), so the ghost is red.
+	_main.set_hover_override(Vector3(22.2, 0, 19.0))
+	await _shot("04c_hover_on_friend_centre")
+
+	# 4c2. Hover on model 7's rim: the ghost snaps to touching its base.
+	_main.set_hover_override(Vector3(22.0 - 0.55, 0, 19.0 + 0.1))
+	await _shot("04c2_hover_on_friend_rim_snaps")
+
+	# 4d. Close up at the box wall (x 11..17, z 14..18): the area reaches the wall
+	# and a cursor right at the wall puts the base against it.
+	_look(camera, Vector3(16, 0, 18.5), 0.6, deg_to_rad(70), 9.0)
+	_main.set_hover_override(Vector3(16.2, 0, 18.05))
+	await _shot("04d_wall_close_up")
+
+	# 4e. Move through model 7, then back again through it after R.
+	_main.set_hover_override(null)
+	print("move through friend: '%s'" % _main.move_selected_to(Vector3(23.6, 0, 18.6)))
+	while _main.is_sliding():
+		await process_frame
+	print("model 1 now at %s" % _main.state.get_model(1).position)
+	_look(camera, Vector3(20.5, 0, 19.5), 0.35, deg_to_rad(65), 16.0)
+	_main.set_hover_override(Vector3(23.6, 0, 21.5))
+	await _shot("04e_after_move_through_friend")
+	_key(KEY_R)
+	print("move back: '%s'" % _main.move_selected_to(Vector3(18, 0, 20)))
+	while _main.is_sliding():
+		await process_frame
+	_key(KEY_R)
+	_look(camera, Vector3(18, 0, 21), 0.35, deg_to_rad(62), 22.0)
+
 	# 5. Move round the corner of the box and look at what is left.
 	_main.set_hover_override(null)
 	var error: String = _main.move_selected_to(Vector3(15.5, 0, 19.6))
