@@ -3,9 +3,10 @@ extends Command
 ## Moves a model along a polyline on flat ground. The path starts at the model's
 ## current position and runs through `waypoints`; the model ends on the last one.
 ##
-## Valid only if the path is no longer than the model's remaining movement, and
-## at no point along it does the base overlap blocking terrain or another model,
-## leave the table, or come within 1" of an enemy base.
+## Valid only if the path is no longer than the model's remaining movement, at
+## no point along it does the base overlap blocking terrain or an enemy base,
+## leave the table, or come within 1" of an enemy base, and at the end it does
+## not overlap any base. Friendly bases may be passed through on the way.
 
 enum Rejection { NONE, INVALID, TOO_FAR, BLOCKED, TOO_CLOSE_TO_ENEMY }
 
@@ -46,14 +47,21 @@ func validate(state: GameState) -> String:
 		var next: Vector2 = _flat(point)
 		var result: MoveLegality.Result = legality.segment_result(previous, next)
 		if result != MoveLegality.Result.OK:
-			if result == MoveLegality.Result.ENEMY:
-				rejection = Rejection.TOO_CLOSE_TO_ENEMY
-			else:
-				rejection = Rejection.BLOCKED
-			return MoveLegality.describe(result)
+			return _reject(result)
 		previous = next
+	var end_result: MoveLegality.Result = legality.point_result(previous)
+	if end_result != MoveLegality.Result.OK:
+		return _reject(end_result)
 	rejection = Rejection.NONE
 	return ""
+
+
+func _reject(result: MoveLegality.Result) -> String:
+	if result == MoveLegality.Result.ENEMY:
+		rejection = Rejection.TOO_CLOSE_TO_ENEMY
+	else:
+		rejection = Rejection.BLOCKED
+	return MoveLegality.describe(result)
 
 
 func apply(state: GameState) -> void:

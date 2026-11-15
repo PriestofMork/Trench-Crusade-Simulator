@@ -66,11 +66,38 @@ func test_rejects_through_rotated_terrain_corner() -> void:
 	assert_eq(state.execute(_move([Vector3(13, 0, 9.8), Vector3(15, 0, 10)])), "")
 
 
-func test_rejects_through_another_model() -> void:
+func test_accepts_path_through_friendly_base() -> void:
 	_place(0, Vector3(13, 0, 10), 32)
 	var command: MoveCommand = _move([Vector3(15.5, 0, 10)])
+	assert_eq(state.execute(command), "")
+	assert_eq(state.get_model(mover).position, Vector3(15.5, 0, 10))
+
+
+func test_accepts_bent_path_with_a_waypoint_on_a_friendly_base() -> void:
+	_place(0, Vector3(13, 0, 10), 32)
+	assert_eq(state.execute(_move([Vector3(13, 0, 10), Vector3(13, 0, 13)])), "")
+
+
+func test_rejects_ending_on_friendly_base() -> void:
+	_place(0, Vector3(13, 0, 10), 32)
+	var command: MoveCommand = _move([Vector3(13.5, 0, 10)])
 	assert_string_contains(state.execute(command), "another model")
 	assert_eq(command.rejection, MoveCommand.Rejection.BLOCKED)
+	assert_eq(state.get_model(mover).position, Vector3(10, 0, 10))
+	# Through it and out the far side, but stopping still overlapping it.
+	var r: float = BaseSizes.mm_to_inches(32) / 2.0
+	assert_ne(state.execute(_move([Vector3(13 + 2 * r - 0.05, 0, 10)])), "")
+	assert_eq(state.execute(_move([Vector3(13 + 2 * r, 0, 10)])), "", "touching is fine")
+
+
+func test_rejects_path_through_enemy_base() -> void:
+	# Far enough from the start and the end that only the base itself is in the way.
+	var walker: int = _place(0, Vector3(10, 0, 30), 32, 10.0)
+	_place(1, Vector3(15, 0, 30), 25)
+	var command: MoveCommand = MoveCommand.new(walker, [Vector3(19.5, 0, 30)])
+	assert_ne(state.execute(command), "")
+	assert_eq(command.rejection, MoveCommand.Rejection.TOO_CLOSE_TO_ENEMY)
+	assert_eq(state.get_model(walker).position, Vector3(10, 0, 30))
 
 
 func test_rejects_off_table() -> void:

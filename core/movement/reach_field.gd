@@ -4,10 +4,12 @@ extends RefCounted
 ## with its remaining movement, and the path there.
 ##
 ## A grid of nodes covers the square around the model that its movement could
-## reach (clipped to the table). The model's own position is exactly a node. A
-## node is standable if the base may stand there; a shortest-path search with
-## 16 neighbours runs over standable nodes, and a step is taken only if the base
-## swept along it is legal. The search is any-angle (Lazy Theta*, see _search()),
+## reach, grown by the base radius so the area the base edge can touch fits on
+## it too (clipped to the table plus a small margin). The model's own position
+## is exactly a node. A shortest-path search with 16 neighbours runs over nodes
+## the base may pass through, and a step is taken only if the base swept along
+## it is legal. Friendly bases may be passed through, so the search crosses
+## them; a node is a destination only if the base may also end there. The search is any-angle (Lazy Theta*, see _search()),
 ## so distances in the open are straight-line distances. All checks are MoveLegality, the same ones
 ## MoveCommand uses, so every path returned here is a path MoveCommand accepts.
 ## Grid paths are never shorter than the straight line, so the field is a little
@@ -22,6 +24,8 @@ const EPSILON: float = 0.0001
 ## so it is capped here to skip far obstacles. Must stay above the longest step.
 const CLEARANCE_CAP: float = 2.0
 const NO_NODE: int = -1
+## Bisection steps when snapping to the closest destination (2^-11 of the step).
+const SNAP_ITERATIONS: int = 11
 
 ## Neighbour steps: 4 straight, 4 diagonal and 8 knight's moves.
 const _STEPS: Array[Vector2i] = [
@@ -44,7 +48,10 @@ var size_z: int = 0
 var _legality: MoveLegality
 var _start_2d: Vector2
 var _start_node: int = NO_NODE
+## Clearance for passing (friendly bases ignored), used by the search.
 var _clearance: PackedFloat64Array = PackedFloat64Array()
+## Clearance for ending a move there (friendly bases included).
+var _stand_clearance: PackedFloat64Array = PackedFloat64Array()
 ## Table position of every node, cached because the search reads them constantly.
 var _positions: PackedVector2Array = PackedVector2Array()
 var _cost: PackedFloat64Array = PackedFloat64Array()
@@ -58,6 +65,11 @@ var _query_cost: float = INF
 var _query_node: int = NO_NODE
 var _query_path: Array[Vector3] = []
 var _query_path_ready: bool = false
+
+# Last closest_destination() query.
+var _snap_point: Vector2 = Vector2(INF, INF)
+var _snap_max: float = -1.0
+var _snap_result: Variant = null
 
 var _heap_cost: PackedFloat64Array = PackedFloat64Array()
 var _heap_node: PackedInt32Array = PackedInt32Array()
@@ -81,7 +93,12 @@ func _init(state: GameState, p_model_id: int, p_cell_size: float = CELL_SIZE) ->
 	_search()
 
 
-## Whether the base centre can get to `point` (its y is ignored).
+## Radius of the model's base, inches.
+func base_radius() -> float:
+	return _legality.radius if _legality != null else 0.0
+
+
+## Whether the base centre can get to `point` (its y is ignored) and end its move there.
 func is_reachable(point: Vector3) -> bool:
 	_resolve(Vector2(point.x, point.z))
 	return _query_node != NO_NODE
@@ -127,6 +144,21 @@ func path_to(point: Vector3) -> Array[Vector3]:
 	return result.duplicate()
 
 
+## The destination closest to `point` (y ignored): `point` itself if it is
+## reachable, else the closest reachable centre position no more than
+## `max_distance` away, or null if there is none. With the base radius as
+## `max_distance` this is the destination for a cursor anywhere in the area
+## the base edge can reach.
+func closest_destination(point: Vector3, max_distance: float) -> Variant:
+	var target: Vector2 = Vector2(point.x, point.z)
+	if target == _snap_point and max_distance == _snap_max:
+		return _snap_result
+	_snap_point = target
+	_snap_max = max_distance
+	_snap_result = _find_closest_destination(target, max_distance)
+	return _snap_result
+
+
 func node_index(ix: int, iz: int) -> int:
 	return iz * size_x + ix
 
@@ -149,12 +181,14 @@ func node_cost(index: int) -> float:
 	return _cost[index]
 
 
+## Whether a move may end on this node: reached within the movement left, and
+## not overlapping a friendly base.
 func is_node_reachable(index: int) -> bool:
-	return _cost[index] <= movement_left + EPSILON
+	return _cost[index] <= movement_left + EPSILON and _stand_clearance[index] >= -EPSILON
 
 
-## One value per node for drawing the outline: negative inside the reachable
-## area, positive outside, roughly in inches from the edge, so a contour at 0
+## One value per node for drawing the outline of where the centre may end a
+## move (is_node_reachable()): negative inside that area, positive outside, roughly in inches from the edge, so a contour at 0
 ## (e.g. marching squares) follows the edge smoothly. Where the edge is set by
 ## an obstacle it follows the obstacle's shape; where it is set by distance it
 ## follows the path cost.
@@ -162,7 +196,7 @@ func contour_values() -> PackedFloat32Array:
 	var values: PackedFloat32Array = PackedFloat32Array()
 	values.resize(node_count())
 	for i: int in node_count():
-		var blocked: float = -_clearance[i]
+		var blocked: float = -_stand_clearance[i]
 		if blocked > EPSILON:
 			values[i] = blocked
 		elif _cost[i] < INF:
@@ -173,11 +207,14 @@ func contour_values() -> PackedFloat32Array:
 
 
 func _build_grid(state: GameState) -> void:
-	var reach: float = movement_left + MARGIN_CELLS * cell_size
-	var left: int = floori(minf(reach, start.x) / cell_size + EPSILON)
-	var right: int = floori(minf(reach, state.table_width - start.x) / cell_size + EPSILON)
-	var near: int = floori(minf(reach, start.z) / cell_size + EPSILON)
-	var far: int = floori(minf(reach, state.table_depth - start.z) / cell_size + EPSILON)
+	# Past the table edge by the margin too, so an area that runs to the edge
+	# still closes on the grid. Nodes off the table are simply never legal.
+	var margin: float = MARGIN_CELLS * cell_size
+	var reach: float = movement_left + _legality.radius + margin
+	var left: int = floori(minf(reach, start.x + margin) / cell_size + EPSILON)
+	var right: int = floori(minf(reach, state.table_width - start.x + margin) / cell_size + EPSILON)
+	var near: int = floori(minf(reach, start.z + margin) / cell_size + EPSILON)
+	var far: int = floori(minf(reach, state.table_depth - start.z + margin) / cell_size + EPSILON)
 	left = maxi(left, 0)
 	right = maxi(right, 0)
 	near = maxi(near, 0)
@@ -192,10 +229,12 @@ func _compute_clearance() -> void:
 	var count: int = node_count()
 	_positions.resize(count)
 	_clearance.resize(count)
+	_stand_clearance.resize(count)
 	for i: int in count:
 		var p: Vector2 = origin + Vector2(i % size_x, i / size_x) * cell_size
 		_positions[i] = p
 		_clearance[i] = _legality.clearance(p, CLEARANCE_CAP)
+		_stand_clearance[i] = minf(_clearance[i], _legality.friendly_clearance(p, CLEARANCE_CAP))
 
 
 func _search() -> void:
@@ -210,7 +249,7 @@ func _search() -> void:
 	_cost.fill(INF)
 	_parent.resize(count)
 	_parent.fill(NO_NODE)
-	if _legality.point_result(_start_2d) != MoveLegality.Result.OK:
+	if _legality.passing_result(_start_2d) != MoveLegality.Result.OK:
 		return
 	var limit: float = movement_left + MARGIN_CELLS * cell_size
 	var step_lengths: PackedFloat64Array = PackedFloat64Array()
@@ -317,6 +356,8 @@ func _resolve(target: Vector2) -> void:
 	_query_path_ready = false
 	if _legality == null or _cost.is_empty() or _cost[_start_node] == INF:
 		return
+	if _legality.point_result(target) != MoveLegality.Result.OK:
+		return
 
 	var direct: float = _start_2d.distance_to(target)
 	if (
@@ -327,7 +368,8 @@ func _resolve(target: Vector2) -> void:
 		_query_node = _DIRECT
 		return
 
-	# Otherwise finish from one of the nearby reached nodes.
+	# Otherwise finish from one of the nearby reached nodes. They need not be
+	# destinations themselves: the path may pass through friendly bases.
 	var local: Vector2 = (target - origin) / cell_size
 	var cx: int = roundi(local.x)
 	var cz: int = roundi(local.y)
@@ -339,7 +381,7 @@ func _resolve(target: Vector2) -> void:
 			if nx < 0 or nz < 0 or nx >= size_x or nz >= size_z:
 				continue
 			var node: int = nz * size_x + nx
-			if not is_node_reachable(node):
+			if _cost[node] > movement_left + EPSILON:
 				continue
 			var total: float = _cost[node] + node_position_2d(node).distance_to(target)
 			if total <= movement_left + EPSILON:
@@ -351,6 +393,80 @@ func _resolve(target: Vector2) -> void:
 			_query_cost = _cost[node] + node_position_2d(node).distance_to(target)
 			_query_node = node
 			return
+
+
+func _find_closest_destination(target: Vector2, max_distance: float) -> Variant:
+	if is_reachable(Vector3(target.x, start.y, target.y)):
+		return Vector3(target.x, start.y, target.y)
+	if _cost.is_empty():
+		return null
+	# The closest destination node, then the last reachable point on the line
+	# from it towards the target. The edge of the area lies within a cell of
+	# that node, so this lands on the edge close to the closest point.
+	var span: float = max_distance + cell_size * 1.5
+	var local: Vector2 = (target - origin) / cell_size
+	var reach_cells: int = ceili(span / cell_size)
+	var best_node: int = NO_NODE
+	var best_distance: float = INF
+	var z_from: int = maxi(floori(local.y) - reach_cells, 0)
+	var z_to: int = mini(ceili(local.y) + reach_cells, size_z - 1)
+	var x_from: int = maxi(floori(local.x) - reach_cells, 0)
+	var x_to: int = mini(ceili(local.x) + reach_cells, size_x - 1)
+	for nz: int in range(z_from, z_to + 1):
+		for nx: int in range(x_from, x_to + 1):
+			var node: int = nz * size_x + nx
+			var d: float = _positions[node].distance_to(target)
+			if d < best_distance and d <= span and is_node_reachable(node):
+				best_distance = d
+				best_node = node
+	if best_node == NO_NODE:
+		return null
+	var best: Vector2 = _bisect_edge(_positions[best_node], target)
+	# That line is not quite the shortest way to the edge. Two better guesses,
+	# one per kind of edge, are kept if they are reachable and closer:
+	# - The movement limit near `best` is a circle round the last turn of the
+	#   path there, so the closest point lies on the line from that turn.
+	var path: Array[Vector3] = path_to(Vector3(best.x, start.y, best.y))
+	var pivot: Vector2 = _start_2d
+	if path.size() >= 2:
+		pivot = Vector2(path[path.size() - 2].x, path[path.size() - 2].z)
+	if is_reachable(Vector3(pivot.x, start.y, pivot.y)):
+		best = _closer(best, _bisect_edge(pivot, target), target)
+	# - Where a base, terrain or the table edge stops the model, step out of
+	#   it along the clearance gradient (exact for flat faces and circles).
+	var stand: float = _stand_clearance_at(target)
+	if stand < 0.0:
+		var h: float = 0.001
+		var gradient: Vector2 = Vector2(
+			_stand_clearance_at(target + Vector2(h, 0)) - _stand_clearance_at(target - Vector2(h, 0)),
+			_stand_clearance_at(target + Vector2(0, h)) - _stand_clearance_at(target - Vector2(0, h))
+		)
+		if gradient.length_squared() > 0.0:
+			var out: Vector2 = target + gradient.normalized() * (-stand + EPSILON)
+			if is_reachable(Vector3(out.x, start.y, out.y)):
+				best = _closer(best, out, target)
+	if best.distance_to(target) > max_distance + EPSILON:
+		return null
+	return Vector3(best.x, start.y, best.y)
+
+
+## The last reachable point on the line from `inside` (reachable) towards `outside`.
+func _bisect_edge(inside: Vector2, outside: Vector2) -> Vector2:
+	for _i: int in SNAP_ITERATIONS:
+		var middle: Vector2 = (inside + outside) * 0.5
+		if is_reachable(Vector3(middle.x, start.y, middle.y)):
+			inside = middle
+		else:
+			outside = middle
+	return inside
+
+
+static func _closer(a: Vector2, b: Vector2, target: Vector2) -> Vector2:
+	return b if b.distance_to(target) < a.distance_to(target) else a
+
+
+func _stand_clearance_at(p: Vector2) -> float:
+	return minf(_legality.clearance(p), _legality.friendly_clearance(p))
 
 
 ## Drops every waypoint whose neighbours can be joined by a legal straight
