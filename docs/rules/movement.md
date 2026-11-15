@@ -3,23 +3,28 @@
 ## Move
 
 - The model moves up to its Movement characteristic in inches.
-- Climbing and jumping are done as part of a move and are paid for out of it.
+- Climbing and jumping are done as part of a move.
 - A model may only come within 1" of an enemy model by charging.
+
+## Open terrain
+
+These need no climb and are moved over normally:
+
+- terrain up to 1" high;
+- trench walls up to 3" high;
+- ladders, ramps, ropes, stairs and anything else made for climbing.
 
 ## Climb
 
-- The model's base must touch a sheer surface.
-- Make a risky success roll.
-  - Success: the model is placed at the top of the surface with the centre of its
-    base on the upper edge.
+- A model within 1" of a sheer surface may attempt to climb up or down it.
+- It must have enough movement left to clear the whole surface; it can never end
+  part-way up.
+- Make a risky success roll when the model reaches the surface.
+  - Success: the model is moved straight up or down to the top or bottom of the
+    surface. At the top it is placed with the centre of its base on the upper edge.
+    It may carry on moving with whatever movement it has left.
   - Failure: the model stays where it attempted the climb, and its activation ends.
 - Cost: the vertical distance climbed, in inches of movement.
-
-## Falling
-
-- A fall of less than 3" has no effect.
-- A fall of 3" or more causes an injury roll against the model at +1 die for every
-  full 3" fallen (3" is +1, 6" and 7" are +2, 9" is +3).
 
 ## Jump over a gap
 
@@ -31,6 +36,24 @@
   - Success: the model is moved to the far side and may continue with any movement
     it has left.
   - Failure: the model falls, and its activation ends.
+- **Ledges of unequal height:**
+  - Far side lower: on a successful jump, also apply the rules for jumping down.
+  - Far side higher: add the extra height to the gap width. If that total is more
+    than the model can jump or move, the jump is impossible.
+
+## Jump down
+
+- A model may jump down as part of a move. It costs no movement.
+- A drop of 3" or more counts as falling: make the injury roll, and then the model
+  may carry on with its move.
+
+## Falling
+
+- The model is moved to the closest space it can legally occupy on the first flat
+  surface beneath the position it fell from.
+- A fall of less than 3" has no effect.
+- A fall of 3" or more causes an injury roll against the model at +1 die for every
+  full 3" fallen (3–5" is +1, 6–8" is +2, 9–11" is +3).
 
 ## Dash
 
@@ -61,9 +84,7 @@
 
 ## Open questions
 
-1. Falling: where does the model land (assumed: directly below the point it fell
-   from), and does anything happen beyond the injury roll?
-2. Going down: climbing down a sheer surface and jumping down from a height.
-3. May a model move through other models' bases (friendly or enemy)? (Assumed: no.)
-4. Does a model in melee have any way to move other than Retreat? (Assumed: no.)
-5. Difficult and dangerous terrain.
+1. May a model move through other models' bases (friendly or enemy)? (Assumed: no.)
+2. Does a model in melee have any way to move other than Retreat? (Assumed: no.)
+3. A model that goes Down from a fall mid-move: its move ends there. (Assumed.)
+4. Difficult and dangerous terrain.

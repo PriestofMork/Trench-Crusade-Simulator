@@ -34,22 +34,48 @@ Rules reference: `docs/rules/movement.md`, section "Move" only.
   can show it.
 - Base-versus-shape checks are plain 2D geometry in `core/` (circle against oriented
   rectangle, circle against circle, swept along each segment). No physics engine.
+**Core: reach field**
+- `ReachField`: given the state and a model, computes everywhere the centre of that
+  model's base can legally get to with its remaining movement. Pure geometry in
+  `core/`, no navigation server.
+- Method: a grid over the table (cell size a constant, start with 0.25"). A cell is
+  standable if the base centred there passes the same legality checks as
+  `MoveCommand` (terrain, other bases, table edge, 1" from enemies). Run a
+  shortest-path search from the model's position over standable cells, with
+  16-direction neighbours so distances are close to true straight-line distances,
+  stopping at the remaining movement. A step between two cells is only allowed if the
+  base swept along it is legal.
+- It exposes: whether a point is reachable, the path cost to it, and a path to it as
+  waypoints, simplified by removing waypoints wherever the direct segment between
+  their neighbours is still legal.
+- **Consistency requirement:** every path the reach field returns must be accepted by
+  `MoveCommand.validate`. The field may be slightly conservative (a little smaller
+  than the true reachable area) but never optimistic. Cover this with a test that
+  samples many reachable cells on a table with terrain and validates each path.
+- It is recomputed when a model is selected and after any command changes the state.
+  Selecting a model must not cause a noticeable hitch; if it does, restrict the grid
+  to the square around the model that its remaining movement can reach.
+
 - A temporary `ResetMovementCommand` restores a model's movement to full. It stands
   in for activations until brief 003 and must be marked as temporary in the code.
 
 **Game: selection and movement UI**
 - Left-click a model to select it; click empty table or press Escape to deselect.
   The selected model is highlighted.
-- While a model is selected, hovering the table shows a path from the model to the
-  cursor, found with Godot's navigation (a navigation mesh built from the terrain
-  data, with the agent radius of the selected model's base). Other models are
-  obstacles too.
-- The path preview shows its length in inches next to the cursor. It is drawn in one
-  colour when `MoveCommand.validate` accepts it and another when it does not, with
-  the rejection reason shown.
-- A ring around the selected model shows its remaining movement as a radius (the
-  straight-line maximum, not the exact reachable area).
-- Left-click with a valid path sends the `MoveCommand`; the model view slides along
+- **Movement area indicator (the most important part of this brief).** While a model
+  is selected, the table shows everywhere the centre of its base can move to, in the
+  style of an XCOM movement indicator: a crisp blue outline around the reachable
+  area with a faint blue fill inside. It comes from the reach field, so it bends
+  around terrain, leaves holes around other models, and stops 1" short of enemies.
+  Build the outline from the reachable-cell mask as a smooth contour (for example
+  marching squares on the cost field), not as visible grid squares. It sits just
+  above the table surface without flickering, and updates after each move to show
+  what is left.
+- Hovering inside the area shows the path from the model to the cursor, taken from
+  the reach field, with its length in inches next to the cursor, and a ghost circle
+  of the base at the destination.
+- Hovering outside the area shows no path, and the ghost circle turns red.
+- Left-click inside the area sends the `MoveCommand` with that path; the model view slides along
   the path to the destination. Input is ignored while it slides.
 - Pressing R sends the temporary reset command for the selected model.
 - Give the six starting models different base sizes and Movement values so the
@@ -62,13 +88,19 @@ Rules reference: `docs/rules/movement.md`, section "Move" only.
   bases do not overlap.
 - Remaining movement is deducted by path length, and a second move can use what is left.
 - The geometry helpers, including a base that only grazes a rotated box corner.
+- `ReachField`: on an empty table the reachable area is close to a disc of the
+  remaining movement (within a few percent, never larger); a point behind a wall is
+  reachable only if the way around is short enough; no reachable point lies within
+  1" of an enemy; and the consistency test described above.
 
 ## Done when
 
 - The test command in `CLAUDE.md` passes, with the output in your report.
-- In the running game you can select a model, see the path preview change colour
-  when it is illegal, move it around a terrain box, and be refused when approaching
-  within 1" of an enemy model.
+- In the running game, selecting a model shows the blue movement area; it visibly
+  wraps around a terrain box and stops short of enemy models; you can move the model
+  around a box; and the area shrinks to the remaining movement after a move.
+- You have looked at the indicator in the running game yourself (a screenshot of the
+  window is enough) and it reads as a clean outline, not a blocky grid.
 - `core/` still has no scene-tree access, and `game/` never changes a model's
   position except by sending a command.
 

@@ -57,7 +57,8 @@ Two layers with a one-way dependency: `game/` knows `core/`, never the reverse.
 | Terrain collision | Hand-blocked simple shapes (boxes, ramps), separate from the visual mesh. Used for both movement and line of sight. |
 | Movement | Free, not grid-based. Select a model, see reachable distance, click to move. |
 | Terrain data | Terrain is defined as plain data in core (simple shapes). The 3D scene, the navigation mesh and the rules checks are all built from that one definition. |
-| Paths | `game/` proposes a path (from Godot's navigation); `core/` validates it against the rules and rejects it if illegal. Core never trusts a path. |
+| Paths | `core/` computes a reach field (where the base centre can legally get to, and the path there) with its own geometry; Godot's navigation is not used. The move command still validates every path it is given. |
+| Movement indicator | A selected model shows its reachable area as a blue outline with a faint fill, XCOM style, drawn from the reach field. |
 | Markers | Spent before the roll; cap of 6 per kind per model. |
 | Blood markers | When a roll is made, the opponent is prompted whether to spend blood markers on it. |
 | Blessing markers | The rolling player is prompted whether to spend blessing markers, if they have any. |
