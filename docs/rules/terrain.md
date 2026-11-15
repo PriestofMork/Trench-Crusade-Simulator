@@ -9,41 +9,77 @@ Kept in one place in the code, like the cylinder heights.
 
 | Value | Start |
 |---|---|
-| Open step: highest step that is simply walked | 1" |
-| Trench wall: highest wall treated as open inside a trench zone | 3" |
-| Steep slope: steepest slope that can be walked | 45° (proposed) |
+| Low obstacle: highest thing that is free to cross | 1" |
+| Open climb: highest wall climbed without a roll | 3" |
+| Steep slope: a slope steeper than this is a wall | 70° |
 
-## What geometry decides automatically
+## Tags
 
-- **Step up or down of at most the open step:** open terrain, walked freely.
-- **Slope up to the steep angle:** walked. The cost is the distance along the slope.
-- **Slope steeper than the steep angle, or a step higher than the open step:**
-  a sheer surface. It must be climbed (a risky roll), or jumped down.
+Every terrain piece starts untagged, which means open terrain. A piece can be tagged:
 
-## What is marked when a map is blocked out
+| Tag | Effect |
+|---|---|
+| (none) | Open. Its height decides how it is crossed, as below. |
+| Sheer | Always needs a climb roll, whatever its height. |
+| Ladder | Never needs a climb roll, whatever its height (ladders, stairs, ropes). |
+| Impassable | Cannot be crossed, climbed or stood on. |
 
-Geometry cannot tell a trench wall from any other wall, so these are marked by hand
-(proposed approach, not yet confirmed by the project owner):
+## Slopes
 
-- **Trench zone:** an area drawn on the map. Inside it, walls up to the trench wall
-  height are open terrain.
-- **Per-piece override:** a single piece can be forced to "trench wall",
-  "impassable" (cannot be stood on or crossed) or "cannot be climbed".
-- **Ladder or stairs link:** a connection between a bottom point and a top point
-  that counts as open terrain.
+- A slope of up to the steep angle is walked. The cost is the distance along the slope.
+- A steeper slope is a wall, and is treated by its height like any other wall.
 
-## Standing on terrain
+## Walls and steps (going up)
 
-- A model stands on a floor: the table, or the top of a terrain piece.
-- It needs headroom: the gap between its floor and anything above it must be at
-  least the model's cylinder height.
-- The centre of its base must be supported by the floor. The base may overhang a
-  drop, but may not overlap terrain that rises more than the open step above its
-  floor.
+The height of a wall is the vertical distance from the floor the model is on to the
+top it is climbing to.
+
+- **Up to the open climb height (3"):** an open climb. No roll. The model touches
+  the wall, pays the height in movement, arrives on top directly above the point it
+  touched, and carries on with its remaining movement in one smooth move.
+- **Higher, or tagged Sheer:** a sheer surface. Climbing it is a risky roll as
+  described in `movement.md`.
+- In both cases the model must have enough movement to reach the top; it never ends
+  part-way up.
+
+## Low obstacles
+
+- A low obstacle is anything up to 1" high (boxes, sandbags).
+- A model that crosses a low obstacle and comes down off it in the same move pays
+  nothing for it.
+- A model that ends its move on top of a low obstacle pays the obstacle's height.
+  In practice: crossing low obstacles is free, and stopping on one adds its height
+  to the cost of the move. A model that started the move on that obstacle pays nothing.
+
+## Going down
+
+- A drop of less than 3" is a free jump down with no effect.
+- A drop of 3" or more is handled in `movement.md` (jump down and fall, or climb down).
+
+## Where a model can be
+
+**While moving**
+- The centre of the base must be over the floor the model is moving on.
+- The base may overhang a drop freely.
+- The base may not overlap terrain higher than its floor, except the wall it is
+  climbing at that moment. (Assumed.)
+- So a model can climb at a corner or cross a narrow beam, even where it could not
+  stop.
+
+**Where the move ends**
+- At least half of the base's area must be over the floor the model stands on.
+- Headroom: the gap between the floor and anything above it must be at least the
+  model's cylinder height.
+- The base may not overlap another model's base or terrain higher than its floor.
+- A low obstacle or ledge top that is too small to hold half the base can be crossed
+  but not stopped on.
+- If a failed roll or a fall would leave a model where it cannot stop, it is moved
+  to the closest position where it can.
 
 ## Open questions
 
-1. Confirm the marking approach and the 45° starting value.
-2. Movement cost of an open step or trench wall: none beyond the horizontal distance?
-   (Assumed: none.)
+1. May a base on the ground overlap a low obstacle next to it (for example sandbags
+   under the rim of the base)? (Assumed: no.)
+2. Climbing down a wall of 3" or more instead of jumping: allowed, paying the height,
+   with a roll only if the wall is sheer? (Assumed: yes.)
 3. Difficult and dangerous terrain.

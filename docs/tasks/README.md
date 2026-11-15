@@ -28,8 +28,8 @@ Open a new session in this folder and say:
 
 - 005: turns and activations, the roll pipeline with a first dice tray, and Dash as
   the first risky roll
-- 006: height, part 2: climbing, jumping gaps, jumping down and falling, with the
-  orange "needs a risky roll" area in the indicator, and ladder and stairs links
+- 006: height, part 2: sheer climbs, jumping gaps, drops of 3" or more and falling,
+  with the orange "needs a risky roll" area in the indicator
 - 007: charge, the 1" melee zone and retreat (free attacks stubbed until attacks exist)
 - 008: line of sight between cylinders
 - 009: ranged and melee attacks, injury rolls, markers and their prompts

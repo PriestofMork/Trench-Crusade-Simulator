@@ -9,13 +9,11 @@
   movement with its base overlapping another base.
 - A model may not move through enemy models' bases.
 
-## Open terrain
+## Open terrain, walls and low obstacles
 
-These need no climb and are moved over normally:
-
-- terrain up to 1" high;
-- trench walls up to 3" high;
-- ladders, ramps, ropes, stairs and anything else made for climbing.
+See `terrain.md`. In short: walls up to 3" are climbed without a roll by paying
+their height; low obstacles up to 1" are free to cross; anything higher, or tagged
+Sheer, is a sheer surface and needs the climb below.
 
 ## Climb
 
@@ -27,7 +25,9 @@ These need no climb and are moved over normally:
   - Success: the model is moved to the top or bottom of the surface, with its base
     placed directly above (or below) the point where it touched the surface. If the
     surface is slanted, it is placed at the closest point on the top (or bottom).
-    It may carry on moving with whatever movement it has left.
+    It may carry on moving with whatever movement it has left. It may pass through a
+    spot where it could not stop (such as a corner), but must end the move somewhere
+    it can (see "Where a model can be" in `terrain.md`).
   - Failure: the model stays where it attempted the climb, and its activation ends.
 - Cost: the vertical distance climbed, in inches of movement.
 
