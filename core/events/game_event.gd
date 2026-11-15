@@ -20,6 +20,18 @@ enum Kind {
 	MOVE_FINISHED,
 	ACTIVATION_ENDED,
 	OVERRIDE_APPLIED,
+	## A model gained markers from a rule ("marker", "count", "reason").
+	MARKERS_GAINED,
+	## An injury roll's result was applied ("text", "blood", "down", "out_of_action").
+	INJURY_APPLIED,
+	MODEL_WENT_DOWN,
+	MODEL_OUT_OF_ACTION,
+	## A model fell ("from", "to", "height": inches).
+	MODEL_FELL,
+	## A move reached a roll point and waits for its roll ("roll": label, "at").
+	MOVE_ROLL_POINT,
+	## A move with rolls in it stopped short of its end ("reason", "at").
+	MOVE_STOPPED,
 }
 
 var kind: Kind
@@ -34,7 +46,8 @@ var result: RollResult = null
 ## Set on DECISION_NEEDED.
 var decision: PendingDecision = null
 ## Anything else, by kind: "turn", "action_id", "reason", "path" (Array[Vector3],
-## start first), "cost", "amount", "modifiers" (Array[RollModifier]), "text".
+## start first), "kinds" (per path segment, Transitions.Kind), "cost",
+## "amount", "modifiers" (Array[RollModifier]), "text".
 var data: Dictionary = {}
 
 

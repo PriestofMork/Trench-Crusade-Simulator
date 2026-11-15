@@ -1,7 +1,7 @@
 class_name Ruleset
 extends RefCounted
 ## The registries every rule plugs into: actions, roll modifier providers,
-## pre-roll choices and roll reactions. The activation code and the roll
+## pre-roll choices, roll reactions and activation-start rules. The activation code and the roll
 ## pipeline only walk these lists. standard() builds the rules of this game
 ## from data/rules/core_rules.json plus the reactions written in code.
 ##
@@ -27,6 +27,8 @@ var actions: Array[ActionDef] = []
 var modifier_providers: Array[RollModifierProvider] = []
 var choice_providers: Array[RollChoiceProvider] = []
 var reactions: Array[RollReaction] = []
+## Run at the start of every activation, in order.
+var activation_rules: Array[ActivationRule] = []
 
 
 func action(id: StringName) -> ActionDef:
@@ -50,6 +52,25 @@ func add_choice_provider(provider: RollChoiceProvider) -> void:
 
 func add_reaction(reaction: RollReaction) -> void:
 	reactions.append(reaction)
+
+
+func add_activation_rule(rule: ActivationRule) -> void:
+	activation_rules.append(rule)
+
+
+## The first registered reaction or provider with this id, or null.
+func reaction(id: StringName) -> RollReaction:
+	for entry: RollReaction in reactions:
+		if entry.id == id:
+			return entry
+	return null
+
+
+func modifier_provider(id: StringName) -> RollModifierProvider:
+	for entry: RollModifierProvider in modifier_providers:
+		if entry.id == id:
+			return entry
+	return null
 
 
 ## A new behaviour for a name an action entry can use.
@@ -81,8 +102,11 @@ static func from_data(data: Dictionary) -> Ruleset:
 			bool(entry.get("risky", false)), behaviour(String(entry["behaviour"]))
 		))
 	for entry: Dictionary in data.get("marker_spending", []):
+		var kinds: Array[StringName] = []
+		for kind: String in entry.get("markers", [entry.get("marker", "")]):
+			kinds.append(StringName(kind))
 		rules.add_choice_provider(MarkerSpendChoice.new(
-			StringName(entry["id"]), StringName(entry["marker"]), DECIDERS[String(entry["decider"])],
+			StringName(entry["id"]), kinds, DECIDERS[String(entry["decider"])],
 			int(entry.get("success_dice", 0)), int(entry.get("injury_dice", 0))
 		))
 	for entry: Dictionary in data.get("warband_flags", []):
@@ -93,5 +117,28 @@ static func from_data(data: Dictionary) -> Ruleset:
 			StringName(entry["flag"]), String(entry["label"]), kinds, int(entry.get("dice", 0)),
 			bool(entry.get("makes_risky", false))
 		))
+	for entry: Dictionary in data.get("context_dice", []):
+		var kinds: Array[RollRequest.Kind] = []
+		for kind: String in entry.get("roll_kinds", []):
+			kinds.append(ROLL_KINDS[kind])
+		rules.add_modifier_provider(ContextStepModifier.new(
+			StringName(entry["id"]), StringName(entry["context"]), String(entry["label"]), kinds,
+			float(entry["step"]), int(entry["dice"])
+		))
+	for entry: Dictionary in data.get("activation_start", []):
+		match String(entry["rule"]):
+			"marker_growth":
+				rules.add_activation_rule(MarkerGrowthRule.new(StringName(entry["marker"]), int(entry.get("amount", 1))))
+			_:
+				push_error("Ruleset: unknown activation rule '%s'" % entry["rule"])
 	rules.add_reaction(RiskyFailureReaction.new())
+	if data.has("injury_results"):
+		var table: Dictionary = data["injury_results"]
+		var bands: Array[InjuryResultReaction.Band] = []
+		for band: Dictionary in table.get("bands", []):
+			bands.append(InjuryResultReaction.Band.new(
+				int(band["min"]), int(band.get("max", -1)), int(band.get("blood", 0)),
+				bool(band.get("down", false)), bool(band.get("out_of_action", false))
+			))
+		rules.add_reaction(InjuryResultReaction.new(bands, int(table.get("down_on_down_blood", 1))))
 	return rules

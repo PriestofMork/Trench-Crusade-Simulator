@@ -21,6 +21,9 @@ var warbands: Array[WarbandState] = [WarbandState.new(0), WarbandState.new(1)]
 var pending: PendingDecision = null
 ## The roll under way (waiting for pre-roll choices), or null.
 var active_roll: ActiveRoll = null
+## What a model is in the middle of across several commands (a move with
+## rolls in it), or null. See Resolution.
+var resolution: Resolution = null
 ## Every command applied, in order: with the seed, this is the whole game.
 var history: Array[Command] = []
 ## The events of the last command applied.
@@ -109,6 +112,26 @@ func redo() -> CommandResult:
 	var result: CommandResult = submit(command)
 	_redo_commands = redo_stack
 	return result
+
+
+## Models still on the table (not Out of Action).
+func models_on_table() -> Array[ModelState]:
+	var result: Array[ModelState] = []
+	for model: ModelState in models:
+		if model.on_table():
+			result.append(model)
+	return result
+
+
+## Takes back commands until the command log is `size` long (a whole move
+## with rolls in it, say). Returns false if that is not possible.
+func undo_to(size: int) -> bool:
+	if size < 0 or size > history.size():
+		return false
+	while history.size() > size:
+		if not undo():
+			return false
+	return true
 
 
 func get_model(id: int) -> ModelState:

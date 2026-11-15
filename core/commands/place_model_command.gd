@@ -52,7 +52,7 @@ func validate(state: GameState) -> String:
 			standing = true
 	if not standing:
 		return "The model must stand on a floor where it could end a move."
-	for other: ModelState in state.models:
+	for other: ModelState in state.models_on_table():
 		if _cylinders_overlap(position, radius, height, other):
 			return "Base would overlap model %d." % other.id
 	return ""

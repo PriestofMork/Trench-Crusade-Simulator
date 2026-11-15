@@ -4,10 +4,25 @@
 		{"id": "dash", "label": "Dash", "move_action": false, "risky": true, "behaviour": "roll_then_move"}
 	],
 	"marker_spending": [
-		{"id": "blood", "marker": "blood", "decider": "opponent", "success_dice": -1, "injury_dice": 1},
-		{"id": "blessing", "marker": "blessing", "decider": "owner", "success_dice": 1, "injury_dice": -1}
+		{"id": "blood", "markers": ["blood", "infection"], "decider": "opponent", "success_dice": -1, "injury_dice": 1},
+		{"id": "blessing", "markers": ["blessing"], "decider": "owner", "success_dice": 1, "injury_dice": -1}
 	],
 	"warband_flags": [
 		{"flag": "all_success_rolls_risky", "label": "All success rolls are risky", "roll_kinds": ["success"], "dice": 0, "makes_risky": true}
-	]
+	],
+	"context_dice": [
+		{"id": "fall", "context": "fall_inches", "label": "Fall of %.1f\"", "roll_kinds": ["injury"], "step": 3.0, "dice": 1}
+	],
+	"activation_start": [
+		{"rule": "marker_growth", "marker": "infection", "amount": 1}
+	],
+	"injury_results": {
+		"comment": "Ruling 1 of brief 006 (provisional bands). Ruling 2: Down on a Down model places down_on_down_blood extra blood markers.",
+		"bands": [
+			{"min": 2, "max": 6, "blood": 1},
+			{"min": 7, "max": 8, "blood": 1, "down": true},
+			{"min": 9, "out_of_action": true}
+		],
+		"down_on_down_blood": 1
+	}
 }

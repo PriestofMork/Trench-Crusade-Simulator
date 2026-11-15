@@ -81,6 +81,8 @@ static func begin_activation(state: GameState, model: ModelState, events: Array[
 		model.down = false
 		t.stood_up = true
 		events.append(GameEvent.new(GameEvent.Kind.MODEL_STOOD_UP, model.player, model.id))
+	for rule: ActivationRule in state.rules.activation_rules:
+		rule.on_activation_start(state, model, events)
 
 
 ## Ends the active model's activation (an unanswered move is dropped) and
@@ -93,6 +95,39 @@ static func end_activation(state: GameState, events: Array[GameEvent], reason: S
 	_clear_activation(t)
 	events.append(GameEvent.new(GameEvent.Kind.ACTIVATION_ENDED, model.player, model.id, {"reason": reason}))
 	_hand_over(state, 1 - model.player, events)
+
+
+## Ends the active model's activation now, or, while a resolution of that
+## model is under way (a move with rolls in it), once it is done: the
+## resolution then finishes what it must first, such as a fall and its injury
+## roll (see Resolution). The first reason given is kept.
+static func end_activation_when_done(state: GameState, events: Array[GameEvent], reason: String) -> void:
+	var resolution: Resolution = state.resolution
+	if resolution != null and resolution.model_id == state.turn.active_model_id:
+		if resolution.end_reason == "":
+			resolution.end_reason = reason
+		return
+	if state.turn.active_model_id != -1:
+		end_activation(state, events, reason)
+
+
+## The model goes Down (ruling 4 of brief 006: during its own activation, that
+## activation ends).
+static func knock_down(state: GameState, model: ModelState, events: Array[GameEvent]) -> void:
+	model.down = true
+	events.append(GameEvent.new(GameEvent.Kind.MODEL_WENT_DOWN, model.player, model.id))
+	if state.turn.active_model_id == model.id:
+		end_activation_when_done(state, events, "went Down")
+
+
+## The model is taken Out of Action (ruling 3 of brief 006): removed from the
+## table, its record kept. During its own activation, that activation ends.
+static func take_out_of_action(state: GameState, model: ModelState, events: Array[GameEvent]) -> void:
+	model.out_of_action = true
+	model.down = false
+	events.append(GameEvent.new(GameEvent.Kind.MODEL_OUT_OF_ACTION, model.player, model.id))
+	if state.turn.active_model_id == model.id:
+		end_activation_when_done(state, events, "taken Out of Action")
 
 
 ## The one place every movement budget passes through: `inches` of movement
@@ -148,14 +183,14 @@ static func _open_move(
 static func count_standing(state: GameState, player: int) -> int:
 	var count: int = 0
 	for model: ModelState in state.models:
-		if model.player == player and not model.down:
+		if model.player == player and model.on_table() and not model.down:
 			count += 1
 	return count
 
 
 static func has_unactivated(state: GameState, player: int) -> bool:
 	for model: ModelState in state.models:
-		if model.player == player and not state.turn.has_activated(model.id):
+		if model.player == player and model.on_table() and not state.turn.has_activated(model.id):
 			return true
 	return false
 
@@ -174,6 +209,10 @@ static func activation_error(state: GameState, player: int, model: ModelState) -
 		return "Waiting for a decision first."
 	if state.active_roll != null:
 		return "A roll is under way."
+	if state.resolution != null:
+		return "A move is under way."
+	if not model.on_table():
+		return "Model %d is Out of Action." % model.id
 	if player != t.player_to_act:
 		return "It is player %d's turn to act, not player %d's." % [t.player_to_act + 1, player + 1]
 	if model.player != player:

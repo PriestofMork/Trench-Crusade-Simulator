@@ -34,6 +34,10 @@ var action_id: StringName = &""
 var weapon_id: StringName = &""
 ## What is being rolled, for the breakdown ("Dash").
 var label: String = ""
+## Situation facts for modifier providers to read, by plain id (for example
+## &"fall_inches" on the injury roll of a fall). Never changed after the
+## roll starts.
+var context: Dictionary = {}
 ## Called as on_resolved(state, result, events) after the reactions ran.
 var on_resolved: Callable = Callable()
 

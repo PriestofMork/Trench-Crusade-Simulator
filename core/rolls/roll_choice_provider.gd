@@ -12,13 +12,12 @@ func offer(_state: GameState, _request: RollRequest) -> RollChoice:
 	return null
 
 
-## Why spending `amount` is not allowed now, or "".
-func spend_error(_state: GameState, choice: RollChoice, amount: int) -> String:
-	if amount < 0 or amount > choice.maximum:
-		return "Choose between 0 and %d." % choice.maximum
-	return ""
+## Why spending `amounts` (one count per option of the choice) is not allowed
+## now, or "".
+func spend_error(_state: GameState, choice: RollChoice, amounts: Array[int]) -> String:
+	return choice.amounts_error(amounts)
 
 
-## Spends `amount` (removing what is spent) and returns the modifiers it gives.
-func spend(_state: GameState, _request: RollRequest, _choice: RollChoice, _amount: int) -> Array[RollModifier]:
+## Spends `amounts` (removing what is spent) and returns the modifiers it gives.
+func spend(_state: GameState, _request: RollRequest, _choice: RollChoice, _amounts: Array[int]) -> Array[RollModifier]:
 	return []

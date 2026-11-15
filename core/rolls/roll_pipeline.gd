@@ -18,28 +18,32 @@ static func start(state: GameState, request: RollRequest, events: Array[GameEven
 	_advance(state, events)
 
 
-## Why `player` may not answer the current choice with `amount`, or "".
-static func choice_error(state: GameState, player: int, amount: int) -> String:
+## Why `player` may not answer the current choice with `amounts` (one count
+## per option), or "".
+static func choice_error(state: GameState, player: int, amounts: Array[int]) -> String:
 	var error: String = PendingDecision.check(state, PendingDecision.Kind.ROLL_CHOICE, player)
 	if error != "":
 		return error
 	var roll: ActiveRoll = state.active_roll
 	var provider: RollChoiceProvider = state.rules.choice_providers[roll.next_choice]
-	return provider.spend_error(state, roll.current_choice, amount)
+	return provider.spend_error(state, roll.current_choice, amounts)
 
 
 ## Answers the current choice and carries on to the next one or the dice.
-static func answer_choice(state: GameState, amount: int, events: Array[GameEvent]) -> void:
+static func answer_choice(state: GameState, amounts: Array[int], events: Array[GameEvent]) -> void:
 	var roll: ActiveRoll = state.active_roll
 	var provider: RollChoiceProvider = state.rules.choice_providers[roll.next_choice]
 	var choice: RollChoice = roll.current_choice
-	var added: Array[RollModifier] = provider.spend(state, roll.request, choice, amount)
+	var added: Array[RollModifier] = provider.spend(state, roll.request, choice, amounts)
+	var amount: int = 0
+	for value: int in amounts:
+		amount += value
 	roll.modifiers.append_array(added)
 	state.pending = null
 	roll.current_choice = null
 	roll.next_choice += 1
 	var event: GameEvent = GameEvent.new(GameEvent.Kind.ROLL_CHOICE_MADE, choice.player, choice.model_id, {
-		"amount": amount, "provider": choice.provider_id, "label": choice.label, "modifiers": added
+		"amount": amount, "amounts": amounts.duplicate(), "provider": choice.provider_id, "label": choice.label, "modifiers": added
 	})
 	event.roll = roll
 	events.append(event)

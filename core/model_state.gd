@@ -14,6 +14,9 @@ var base_mm: int
 var movement: float
 ## Whether the model is Down (docs/rules/markers.md).
 var down: bool = false
+## Taken Out of Action (ruling 3 of brief 006): off the table for good. It no
+## longer activates, blocks or counts as standing; its record stays here.
+var out_of_action: bool = false
 ## Marker counts by kind (see Markers); kinds not present count as 0.
 var markers: Dictionary[StringName, int] = {}
 
@@ -26,6 +29,11 @@ func _init(
 	position = p_position
 	base_mm = p_base_mm
 	movement = p_movement
+
+
+## Whether the model is still on the table (not Out of Action).
+func on_table() -> bool:
+	return not out_of_action
 
 
 func base_diameter_inches() -> float:

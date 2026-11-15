@@ -73,7 +73,7 @@ func _init(state: GameState, model: ModelState, p_field: HeightField = null) -> 
 	for s: int in start_surfaces:
 		start_piece_ids.append(field.surface_piece_id(s))
 	for other: ModelState in state.models:
-		if other.id == model.id:
+		if other.id == model.id or not other.on_table():
 			continue
 		var centre: Vector2 = Vector2(other.position.x, other.position.z)
 		if other.player != model.player:
