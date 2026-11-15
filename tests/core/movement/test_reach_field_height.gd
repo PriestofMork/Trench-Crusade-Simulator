@@ -94,7 +94,7 @@ func test_platform_by_the_ramp_and_by_the_wall_at_different_costs() -> void:
 	assert_false(_kinds(field, walker, walk.waypoints).has(Transitions.Kind.OPEN_CLIMB))
 
 
-func test_four_inch_block_top_is_never_reachable() -> void:
+func test_four_inch_block_top_is_reachable_only_with_a_roll() -> void:
 	var id: int = _model_at(Vector3(6, 0, 30), 32, 12.0)
 	var field: ReachField = ReachField.new(state, id)
 	var block: int = _surface_of_piece(field, Vector2(6, 26))
@@ -102,18 +102,26 @@ func test_four_inch_block_top_is_never_reachable() -> void:
 	var near: int = 0
 	for k: int in field.state_count():
 		if field.state_surface(k) == block:
-			assert_eq(field.state_cost(k), INF, "block top state %s reached" % str(field.state_position(k)))
+			assert_eq(field.state_cost(k), INF, "block top state %s reached without a roll" % str(field.state_position(k)))
+			assert_false(field.is_state_safe(k))
 			near += 1
 	assert_gt(near, 50, "the block's top is in the field")
-	assert_false(field.is_reachable(Vector3(6, 4, 26)))
+	var top: Vector3 = Vector3(6, 4, 26)
+	assert_true(field.is_reachable(top), "with a sheer climb")
+	assert_true(field.needs_rolls(top))
+	assert_eq(field.tier_at(top), 1)
+	var rolls: Array[Dictionary] = field.rolls_to(top)
+	assert_eq(rolls.size(), 1)
+	assert_eq(rolls[0]["kind"], &"climb")
+	_assert_valid(field, id, top, "the climb")
 
 
 func test_sheer_wall_top_is_not_reachable_without_a_roll() -> void:
 	var id: int = _model_at(Vector3(14, 0, 29), 32, 8.0)
 	var field: ReachField = ReachField.new(state, id)
-	assert_false(field.is_reachable(Vector3(14, 2, 26)))
-	# But the far side is reachable by going round it.
-	assert_true(field.is_reachable(Vector3(17, 0, 24)))
+	assert_true(field.needs_rolls(Vector3(14, 2, 26)), "only with a climb roll")
+	# The far side is reachable by going round it, with no roll.
+	assert_eq(field.tier_at(Vector3(17, 0, 24)), 0)
 
 
 func test_tower_top_only_by_the_ladder_face() -> void:
@@ -130,12 +138,21 @@ func test_tower_top_only_by_the_ladder_face() -> void:
 	var tower: int = _surface_of_piece(field, Vector2(24, 26))
 	var checked: int = 0
 	for k: int in range(0, field.state_count(), 3):
-		if field.state_surface(k) != tower or not field.is_state_reachable(k):
+		if field.state_surface(k) != tower or not field.is_state_safe(k):
 			continue
 		var command: MoveCommand = _assert_valid(field, id, field.state_position(k), "tower top")
 		assert_true(_kinds(field, id, command.waypoints).has(Transitions.Kind.LADDER_UP))
 		checked += 1
+		# Reachable both ways (a sheer climb up the north face, or round to the
+		# ladder): the safe way is the one offered, though longer (ruling 8).
+		var at: Vector3 = field.state_position(k)
+		assert_eq(field.tier_at(at), 0)
+		assert_true(field.rolls_to(at).is_empty())
+		var straight: float = (at.z - 24.5) + 4.0 + (24.5 - 21.5)
+		assert_gt(command.cost, straight, "dearer than the climb straight up the north face")
 	assert_gt(checked, 10)
+	# Further from the ladder, only the climb is within reach.
+	assert_eq(field.tier_at(top), 1)
 
 
 func test_down_from_the_tower_only_by_the_ladder_face() -> void:
@@ -143,7 +160,7 @@ func test_down_from_the_tower_only_by_the_ladder_face() -> void:
 	var field: ReachField = ReachField.new(state, id)
 	var checked: int = 0
 	for k: int in range(0, field.state_count(), 2):
-		if field.state_surface(k) != HeightField.TABLE or not field.is_state_reachable(k):
+		if field.state_surface(k) != HeightField.TABLE or not field.is_state_safe(k):
 			continue
 		var command: MoveCommand = _assert_valid(field, id, field.state_position(k), "down")
 		assert_true(_kinds(field, id, command.waypoints).has(Transitions.Kind.LADDER_DOWN))
@@ -151,7 +168,7 @@ func test_down_from_the_tower_only_by_the_ladder_face() -> void:
 	assert_gt(checked, 50)
 	# North of the tower is 4" straight down: not without a roll, so only round.
 	var north: Vector3 = Vector3(24, 0, 23.8)
-	if field.is_reachable(north):
+	if field.tier_at(north) == 0:
 		var command: MoveCommand = _assert_valid(field, id, north, "north")
 		assert_true(_kinds(field, id, command.waypoints).has(Transitions.Kind.LADDER_DOWN))
 
@@ -310,3 +327,74 @@ func test_sandbag_row_is_one_area_and_one_straight_walk() -> void:
 		if field.field.surface_height(layer.surface, Vector2(7, 38)) > 0.25:
 			row_layers += 1
 	assert_eq(row_layers, 1, "one layer for the whole row")
+
+
+## Two platforms 4" high (x 8..12 and x 12 + gap..16 + gap, z 8..12), the
+## model on the west one.
+func _gap(gap: float, movement: float = 6.0) -> int:
+	_piece(Vector2(10, 10), Vector3(4, 4, 4))
+	_piece(Vector2(14 + gap, 10), Vector3(4, 4, 4))
+	return _place(Vector3(11, 4, 10), 32, movement)
+
+
+func test_the_far_platform_is_reached_by_jumping_only_within_the_limit() -> void:
+	var id: int = _gap(2.5)
+	var field: ReachField = ReachField.new(state, id)
+	var far: Vector3 = Vector3(15.5, 4, 10)
+	assert_true(field.is_reachable(far))
+	assert_eq(field.tier_at(far), 1)
+	var rolls: Array[Dictionary] = field.rolls_to(far)
+	assert_eq(rolls.size(), 1)
+	assert_eq(rolls[0]["kind"], &"jump")
+	var command: MoveCommand = _assert_valid(field, id, far, "the jump")
+	assert_true(_kinds(field, id, command.waypoints).has(Transitions.Kind.GAP_JUMP))
+	# Too wide for Movement 6 (limit 3"): no jump, and dropping in and climbing
+	# out is too far.
+	state = GameState.new(1)
+	id = _gap(3.5)
+	field = ReachField.new(state, id)
+	assert_false(field.is_reachable(Vector3(16.5, 4, 10)))
+	# The gap itself is reachable by dropping into it, with an injury roll.
+	var floor_of_gap: Vector3 = Vector3(13.75, 0, 10)
+	assert_true(field.needs_rolls(floor_of_gap))
+	assert_eq(field.rolls_to(floor_of_gap)[0]["kind"], &"injury")
+
+
+func test_the_jump_limit_in_the_field_follows_standing_up() -> void:
+	var id: int = _gap(2.5)
+	state.get_model(id).down = true
+	TurnHelper.grant_move(state, id)
+	var field: ReachField = ReachField.new(state, id, state.pending.budget)
+	assert_false(field.is_reachable(Vector3(14.6, 4, 10)), "stood up: the limit is 1.5\"")
+
+
+func test_roll_lists_match_the_move_command_with_risky_routes() -> void:
+	# The test table has every risky crossing; every offered route is
+	# accepted with the same rolls, in the same order, at the same cost.
+	_test_table()
+	var checked: int = 0
+	var risky: int = 0
+	for model: ModelState in state.models:
+		var field: ReachField = ReachField.new(state, model.id)
+		var stride: int = maxi(field.state_count() / 250, 1)
+		for k: int in range(0, field.state_count(), stride):
+			if not field.is_state_reachable(k):
+				continue
+			var target: Vector3 = field.state_position(k)
+			var path: Array[Vector3] = field.path_to(target)
+			var command: MoveCommand = TurnHelper.move(state, model.id, path)
+			assert_eq(command.validate(state), "", "model %d to %s via %s" % [model.id, str(target), str(path)])
+			if command.path() == null:
+				continue
+			var expected: Array[Dictionary] = field.rolls_to(target)
+			var got: Array[Dictionary] = command.path().rolls()
+			assert_eq(got.size(), expected.size(), "rolls to %s" % str(target))
+			for i: int in mini(got.size(), expected.size()):
+				assert_eq(got[i]["kind"], expected[i]["kind"])
+			assert_eq(field.needs_rolls(target), not got.is_empty(), "tier and rolls agree at %s" % str(target))
+			assert_eq(field.tier_at(target), got.size(), "the tier is the number of rolls")
+			if not got.is_empty():
+				risky += 1
+			checked += 1
+	gut.p("checked %d routes, %d with rolls" % [checked, risky])
+	assert_gt(risky, 100, "risky routes are part of the check")

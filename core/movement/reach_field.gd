@@ -31,6 +31,17 @@ extends RefCounted
 ## is re-priced with MoveLegality.segment_cost() and stop_surcharge(), the
 ## functions MoveCommand uses, so a path this field returns is a path
 ## MoveCommand accepts, at the cost this field reports.
+##
+## Rolls (brief 006): crossings that need rolls (sheer climbs, drops of 3" or
+## more, gap jumps) are searched in *tiers*, one search per number of rolls
+## made so far, 0 to MAX_ROLLS. Tier 0 is the safe field: walks and roll-free
+## crossings only. A crossing with k rolls found while searching tier t is not
+## followed there; its arrival point becomes a seed of tier t + k, which is
+## searched next from its seeds with roll-free steps again. A destination is
+## then offered from the lowest tier that reaches it within the movement left,
+## at the cheapest cost there (ruling 8: the safe route if there is one, even
+## if it is longer; else the fewest rolls, then the cheapest). rolls_to()
+## lists the rolls on the offered route in order.
 
 const CELL_SIZE: float = 0.25
 ## Nodes searched past the remaining movement so the outline can close and
@@ -45,6 +56,10 @@ const NO_NODE: int = -1
 const NONE: int = -1
 ## Bisection steps when snapping to the closest destination (2^-11 of the step).
 const SNAP_ITERATIONS: int = 11
+## The most rolls a route offered by the field may make.
+const MAX_ROLLS: int = 3
+## A state's tier when it cannot be reached at all.
+const UNREACHED: int = -1
 
 ## Neighbour steps: 4 straight, 4 diagonal and 8 knight's moves.
 const _STEPS: Array[Vector2i] = [
@@ -65,9 +80,14 @@ class Layer:
 	var iz0: int
 	var size_x: int
 	var size_z: int
-	## Negative where the centre may end a move, positive outside, roughly in
-	## inches from the edge.
+	## Negative where the centre may end a move without a roll, positive
+	## outside, roughly in inches from the edge.
 	var values: PackedFloat32Array
+	## The same for ending a move at all, with or without rolls (the orange
+	## area is where this is negative and `values` is not).
+	var risky_values: PackedFloat32Array
+	## Whether any destination on this surface needs rolls.
+	var has_risky: bool = false
 	## Positive where the surface is not there or covered by terrain, in inches.
 	var clip: PackedFloat32Array
 
@@ -83,6 +103,9 @@ var size_x: int = 0
 var size_z: int = 0
 var field: HeightField
 var legality: MoveLegality
+## How long building took, for reports: "setup_ms", "search_ms" and
+## "tier_<n>_ms" (wall-clock; diagnostics only, never used for rules).
+var timings: Dictionary = {}
 
 var _start_2d: Vector2
 var _start_node: int = NO_NODE
@@ -111,6 +134,18 @@ var _done: PackedByteArray = PackedByteArray()
 var _state_anchor: PackedInt32Array = PackedInt32Array()
 var _start_states: PackedInt32Array = PackedInt32Array()
 
+# Tiers (see the class notes). The arrays above belong to the tier being
+# searched or queried, `_tier`; the others are kept in `_tiers` (null for a
+# tier nothing reached). Anchors are shared, each tagged with its tier.
+var _tier: int = 0
+var _tiers: Array = []
+var _seed_anchors: Array[PackedInt32Array] = []
+## Per state: the cost without rolls, and the cheapest cost in any tier.
+var _safe_cost: PackedFloat64Array = PackedFloat64Array()
+var _any_cost: PackedFloat64Array = PackedFloat64Array()
+## Per surface, the other surfaces close enough to jump to.
+var _jump_targets: Array[PackedInt32Array] = []
+
 # Anchors: points a path runs through. The path to an anchor is the path to
 # _anchor_prev, then the _anchor_via points, then the anchor.
 var _anchor_pos: PackedVector3Array = PackedVector3Array()
@@ -119,7 +154,9 @@ var _anchor_cost: PackedFloat64Array = PackedFloat64Array()
 var _anchor_prev: PackedInt32Array = PackedInt32Array()
 var _anchor_via: Array[PackedVector3Array] = []
 var _anchor_clearance: PackedFloat64Array = PackedFloat64Array()
-## Off-grid anchors by their nearest node, for joining queries to them.
+var _anchor_tier: PackedInt32Array = PackedInt32Array()
+## Off-grid anchors by their nearest node and tier (see _near_key()), for
+## joining queries to them.
 var _anchors_near_node: Dictionary[int, PackedInt32Array] = {}
 ## Per node, the surfaces whose footprint is close enough to climb onto from there.
 var _wall_surfaces_near: Array[PackedInt32Array] = []
@@ -130,6 +167,7 @@ var _near_other_surface: PackedByteArray = PackedByteArray()
 var _query_key: Vector4 = Vector4(INF, INF, INF, INF)
 var _query_anchor: int = NONE
 var _query_surface: int = NONE
+var _query_tier: int = UNREACHED
 var _query_target: Vector3
 var _query_path: Array[Vector3] = []
 var _query_path_ready: bool = false
@@ -158,16 +196,20 @@ func _init(state: GameState, p_model_id: int, p_budget: float = -1.0, p_cell_siz
 	budget = p_budget if p_budget >= 0.0 else model.movement
 	_start_2d = Vector2(start.x, start.z)
 	legality = MoveLegality.new(state, model)
-	legality.allow_rolls = false
 	field = legality.field
 	_radius = legality.radius
 	_limit = budget + MARGIN_CELLS * cell_size
 	for step: Vector2i in _STEPS:
 		_step_lengths.append(Vector2(step).length() * cell_size)
+	var t0: int = Time.get_ticks_usec()
 	_build_grid(state)
 	_build_states()
 	_build_wall_lists()
+	_build_jump_targets()
+	var t1: int = Time.get_ticks_usec()
 	_search()
+	timings["setup_ms"] = (t1 - t0) / 1000.0
+	timings["search_ms"] = (Time.get_ticks_usec() - t1) / 1000.0
 
 
 ## Radius of the model's base, inches.
@@ -175,12 +217,36 @@ func base_radius() -> float:
 	return _radius
 
 
-## Whether the base centre can get to `point` and end its move there. The point
-## is on the floor whose height there is closest to point.y (within
-## HeightField.TOLERANCE).
+## Whether the base centre can get to `point` and end its move there, with or
+## without rolls. The point is on the floor whose height there is closest to
+## point.y (within HeightField.TOLERANCE).
 func is_reachable(point: Vector3) -> bool:
 	_resolve(Vector2(point.x, point.z), _surfaces_for(point))
 	return _query_anchor != NONE
+
+
+## How many rolls the route offered to `point` makes at most (its tier): 0 for
+## a safe route, UNREACHED if there is none.
+func tier_at(point: Vector3) -> int:
+	_resolve(Vector2(point.x, point.z), _surfaces_for(point))
+	return _query_tier if _query_anchor != NONE else UNREACHED
+
+
+## Whether `point` can only be reached with rolls (an orange destination).
+func needs_rolls(point: Vector3) -> bool:
+	return tier_at(point) > 0
+
+
+## The rolls on the route offered to `point`, in order (see
+## MoveSegment.rolls()); empty for a safe route or an unreachable point.
+func rolls_to(point: Vector3) -> Array[Dictionary]:
+	var result: Array[Dictionary] = []
+	var path: Array[Vector3] = path_to(point)
+	if path.is_empty():
+		return result
+	for segment: MoveSegment in legality.segments_for(start, path):
+		result.append_array(segment.rolls())
+	return result
 
 
 ## What a move to `point` along path_to() deducts (its path plus any low
@@ -279,16 +345,30 @@ func state_node(index: int) -> int:
 	return _state_node[index]
 
 
-## Path cost to a state, INF if the search did not reach it.
+## Path cost to a state without any roll, INF if the safe search did not reach it.
 func state_cost(index: int) -> float:
-	return _cost[index]
+	return _safe_cost[index]
 
 
-## Whether a move may end on this state: the model may stop there, and its path
-## plus any surcharge fits the movement left.
+## The cheapest path cost to a state in any tier (with or without rolls).
+func state_cost_with_rolls(index: int) -> float:
+	return _any_cost[index]
+
+
+## Whether a move may end on this state without a roll.
+func is_state_safe(index: int) -> bool:
+	return _safe_cost[index] + _surface_surcharge[_state_surface[index]] <= budget + EPSILON and _can_stand(index)
+
+
+## Whether a move may end on this state, with or without rolls: the model may
+## stop there, and its path plus any surcharge fits the movement left.
 func is_state_reachable(index: int) -> bool:
-	if _cost[index] + _surface_surcharge[_state_surface[index]] > budget + EPSILON:
+	if _any_cost[index] + _surface_surcharge[_state_surface[index]] > budget + EPSILON:
 		return false
+	return _can_stand(index)
+
+
+func _can_stand(index: int) -> bool:
 	if _stand_ok[index] == 0:
 		var ok: bool = legality.stop_result_if_passing(_state_pos_2d[index], _state_surface[index]) == MoveLegality.Result.OK
 		_stand_ok[index] = 1 if ok else 2
@@ -340,6 +420,7 @@ func _layer_for(surface: int) -> Layer:
 	layer.size_x = ix1 - layer.ix0 + 1
 	layer.size_z = iz1 - layer.iz0 + 1
 	layer.values.resize(layer.size_x * layer.size_z)
+	layer.risky_values.resize(layer.size_x * layer.size_z)
 	layer.clip.resize(layer.size_x * layer.size_z)
 	for j: int in layer.size_z:
 		for i: int in layer.size_x:
@@ -361,23 +442,31 @@ func _layer_for(surface: int) -> Layer:
 			layer.clip[k] = field.level_visible_value(p, surface)
 			if p.distance_to(_start_2d) > _limit:
 				layer.values[k] = cell_size
+				layer.risky_values[k] = cell_size
 				continue
 			if on.is_empty():
 				on.append(nearest)
 			var value: float = INF
+			var risky: float = INF
 			for member: int in on:
-				value = minf(value, _node_value(node, p, member))
+				var blocked: float = -legality.stand_value(p, member, CLEARANCE_CAP)
+				value = minf(value, _node_value(node, member, blocked, _safe_cost))
+				risky = minf(risky, _node_value(node, member, blocked, _any_cost))
 			layer.values[k] = value
+			layer.risky_values[k] = risky
+			if risky < 0.0 and value >= 0.0:
+				layer.has_risky = true
 	return layer
 
 
-func _node_value(node: int, p: Vector2, surface: int) -> float:
-	var blocked: float = -legality.stand_value(p, surface, CLEARANCE_CAP)
+## A node's contour value on `surface` from per-state `costs` (see Layer):
+## `blocked` is minus the stand value there.
+func _node_value(node: int, surface: int, blocked: float, costs: PackedFloat64Array) -> float:
 	if blocked > EPSILON:
 		return blocked
 	var state: int = _state_at(node, surface)
-	if state != NONE and _cost[state] < INF:
-		return maxf(_cost[state] + _surface_surcharge[surface] - budget, blocked)
+	if state != NONE and costs[state] < INF:
+		return maxf(costs[state] + _surface_surcharge[surface] - budget, blocked)
 	return cell_size
 
 
@@ -422,21 +511,62 @@ func _build_states() -> void:
 			if node == _start_node and legality.start_surfaces.has(surface):
 				_start_states.append(k)
 	_node_first[count] = _state_node.size()
+	_stand_ok.resize(_state_node.size())
+	_new_tier_arrays()
+	_mark_surface_boundaries()
+
+
+## Fresh search arrays for the tier about to be searched (new arrays, so a
+## finished tier's arrays kept in _tiers are never touched).
+func _new_tier_arrays() -> void:
 	var states: int = _state_node.size()
+	_cost = PackedFloat64Array()
 	_cost.resize(states)
 	_cost.fill(INF)
+	_parent = PackedInt32Array()
 	_parent.resize(states)
 	_parent.fill(NONE)
+	_parent_checked = PackedByteArray()
 	_parent_checked.resize(states)
+	_checked_cost = PackedFloat64Array()
 	_checked_cost.resize(states)
 	_checked_cost.fill(INF)
+	_checked_parent = PackedInt32Array()
 	_checked_parent.resize(states)
 	_checked_parent.fill(NONE)
+	_done = PackedByteArray()
 	_done.resize(states)
-	_stand_ok.resize(states)
+	_state_anchor = PackedInt32Array()
 	_state_anchor.resize(states)
 	_state_anchor.fill(NONE)
-	_mark_surface_boundaries()
+
+
+func _tier_arrays() -> Dictionary:
+	return {
+		"cost": _cost, "parent": _parent, "parent_checked": _parent_checked, "checked_cost": _checked_cost,
+		"checked_parent": _checked_parent, "done": _done, "state_anchor": _state_anchor,
+	}
+
+
+## Makes `tier` the one the search arrays belong to, keeping the current one's
+## (queries add anchors to them). False if nothing reached that tier.
+func _use_tier(tier: int) -> bool:
+	if tier == _tier:
+		return _tiers[tier] != null
+	if _tiers[_tier] != null:
+		_tiers[_tier] = _tier_arrays()
+	if _tiers[tier] == null:
+		return false
+	_tier = tier
+	var arrays: Dictionary = _tiers[tier]
+	_cost = arrays["cost"]
+	_parent = arrays["parent"]
+	_parent_checked = arrays["parent_checked"]
+	_checked_cost = arrays["checked_cost"]
+	_checked_parent = arrays["checked_parent"]
+	_done = arrays["done"]
+	_state_anchor = arrays["state_anchor"]
+	return true
 
 
 ## Marks nodes where the search may change surface: another surface within a step.
@@ -488,19 +618,65 @@ func _build_wall_lists() -> void:
 				_wall_surfaces_near[node_index(ix, iz)].append(s.index)
 
 
+## For jumping: per surface, the others whose footprints come within the jump
+## limit (not the table, not the same level).
+func _build_jump_targets() -> void:
+	_jump_targets.resize(field.surface_count())
+	var limit: float = legality.jump_limit
+	if limit < MoveLegality.MIN_GAP:
+		return
+	for a: HeightField.Surface in field.surfaces:
+		if a.is_table():
+			continue
+		for b: HeightField.Surface in field.surfaces:
+			if b.is_table() or b.index == a.index or field.same_level(a.index, b.index):
+				continue
+			var apart: Vector2 = (b.bounds_min - a.bounds_max).max(a.bounds_min - b.bounds_max)
+			if apart.x <= limit and apart.y <= limit:
+				_jump_targets[a.index].append(b.index)
+
+
 ## How far from a wall a node may be and still walk to it and cross it.
 func _wall_reach() -> float:
 	return cell_size * 1.5
 
 
+## One search per tier (see the class notes), then the per-state costs over all tiers.
 func _search() -> void:
-	for k: int in _start_states:
-		var anchor: int = _add_anchor(_state_pos[k], _state_surface[k], 0.0, NONE, PackedVector3Array(), _clearance[k])
-		_state_anchor[k] = anchor
-		_cost[k] = 0.0
-		_parent[k] = anchor
-		_parent_checked[k] = 1
-		_heap_push(0.0, k)
+	_seed_anchors.resize(MAX_ROLLS + 1)
+	_tiers.resize(MAX_ROLLS + 1)
+	_tiers.fill(null)
+	for tier: int in MAX_ROLLS + 1:
+		_tier = tier
+		if tier == 0:
+			for k: int in _start_states:
+				var anchor: int = _add_anchor(_state_pos[k], _state_surface[k], 0.0, NONE, PackedVector3Array(), _clearance[k])
+				_state_anchor[k] = anchor
+				_cost[k] = 0.0
+				_parent[k] = anchor
+				_parent_checked[k] = 1
+				_heap_push(0.0, k)
+		else:
+			if _seed_anchors[tier].is_empty():
+				continue
+			_new_tier_arrays()
+			for anchor: int in _seed_anchors[tier]:
+				_join_anchor(anchor)
+		var tier_started: int = Time.get_ticks_usec()
+		_run_search()
+		timings["tier_%d_ms" % tier] = (Time.get_ticks_usec() - tier_started) / 1000.0
+		_tiers[tier] = _tier_arrays()
+		if tier == 0:
+			_safe_cost = _cost
+			_any_cost = _cost.duplicate()
+		else:
+			for k: int in _cost.size():
+				if _cost[k] < _any_cost[k]:
+					_any_cost[k] = _cost[k]
+	_use_tier(0)
+
+
+func _run_search() -> void:
 	while not _heap_cost.is_empty():
 		var cost: float = _heap_cost[0]
 		var state: int = _heap_pop()
@@ -512,6 +688,10 @@ func _search() -> void:
 		_done[state] = 1
 		if _cost[state] > _limit:
 			break
+		# A lower tier got here as cheaply, with fewer rolls: whatever follows
+		# from here is no better in this tier.
+		if _tier > 0 and _any_cost[state] <= _cost[state] + EPSILON:
+			continue
 		_expand_walks(state)
 		_expand_switches(state)
 		_expand_walls(state)
@@ -684,6 +864,7 @@ func _expand_walls(state: int) -> void:
 			directions.append((normal + _outward_normal(own, (i + 1) % n, orientation)).normalized())
 		var edge_height: float = field.surface_height(surface, at)
 		for direction: Vector2 in directions:
+			_try_jumps(state, at, surface, direction)
 			var land: Vector2 = at + direction * _radius
 			var below: int = NONE
 			for s: int in field.surfaces_at(land):
@@ -700,15 +881,35 @@ static func _outward_normal(polygon: PackedVector2Array, i: int, orientation: fl
 	return Vector2(edge.y, -edge.x).normalized() * orientation
 
 
-## Walks from the state to `from` on `from_surface`, crosses the wall to `to` on
-## `to_surface`, and joins the arrival point to the nodes around it.
-func _try_wall(state: int, from: Vector2, from_surface: int, to: Vector2, to_surface: int) -> void:
+## Gap jumps off the edge of `surface` from a state near it: straight out
+## along the edge's outward normal (and the corner's bisector), to the first
+## surface within the jump limit that way.
+func _try_jumps(state: int, at: Vector2, surface: int, direction: Vector2) -> void:
+	var targets: PackedInt32Array = _jump_targets[surface]
+	if targets.is_empty():
+		return
+	var far: Vector2 = at + direction * (legality.jump_limit + EPSILON)
+	var length: float = at.distance_to(far)
+	for target: int in targets:
+		var span: Vector2 = PlanarGeometry.segment_polygon_clip(at, far, field.surfaces[target].polygon)
+		if span.x > span.y or span.x * length < MoveLegality.MIN_GAP:
+			continue
+		_try_wall(state, at, surface, at.lerp(far, span.x), target, true)
+
+
+
+## Walks from the state to `from` on `from_surface`, crosses to `to` on
+## `to_surface` (over a wall, or jumping a gap if `jump`), and joins the
+## arrival point to the nodes around it. A crossing that makes k rolls
+## arrives in tier _tier + k instead: its arrival point becomes a seed there.
+func _try_wall(state: int, from: Vector2, from_surface: int, to: Vector2, to_surface: int, jump: bool = false) -> void:
 	var here: Vector2 = _state_pos_2d[state]
 	# States expand cheapest first, so a crossing already made close by is
 	# usually at least as good: skip this one if an arrival point near `to`
-	# plus the way from it is no dearer than the least this one could cost.
+	# plus the way from it is no dearer than the least this one could cost,
+	# with no more rolls.
 	var least: float = _cost[state] + here.distance_to(from) + from.distance_to(to)
-	if _arrival_near_is_as_cheap(to, to_surface, least):
+	if _arrival_near_is_as_cheap(to, to_surface, least, 0, _tier):
 		return
 	if not field.is_floor(from, from_surface) or not field.is_floor(to, to_surface):
 		return
@@ -717,18 +918,44 @@ func _try_wall(state: int, from: Vector2, from_surface: int, to: Vector2, to_sur
 		if legality.walk_result(here, from, from_surface) != MoveLegality.Result.OK:
 			return
 		walk = legality.walk_length(here, from, from_surface)
-	var crossing: float = legality.wall_cost(from, from_surface, to, to_surface)
+	var crossing: float = (
+		legality.jump_cost(from, from_surface, to, to_surface) if jump
+		else legality.wall_cost(from, from_surface, to, to_surface)
+	)
 	if crossing == INF:
+		return
+	var tier: int = _tier + legality.last_rolls
+	if tier > MAX_ROLLS:
 		return
 	var arrival_cost: float = _cost[state] + walk + crossing
 	if arrival_cost > _limit:
+		return
+	if tier > _tier and _arrival_near_is_as_cheap(to, to_surface, arrival_cost, _tier + 1, tier):
 		return
 	var via: PackedVector3Array = PackedVector3Array()
 	if here.distance_to(from) > EPSILON:
 		via.append(legality.on_surface(from, from_surface))
 	else:
 		via.append(_state_pos[state])
-	var anchor: int = NONE
+	# Even with nothing to join, the arrival point may be a destination (a
+	# centre on a straight ledge) or lead to one.
+	var anchor: int = _add_anchor(
+		legality.on_surface(to, to_surface), to_surface, arrival_cost, _anchor_of(state), via,
+		legality.clearance(to, to_surface, CLEARANCE_CAP), tier
+	)
+	_register_anchor(anchor, to)
+	if tier == _tier:
+		_join_anchor(anchor)
+	else:
+		_seed_anchors[tier].append(anchor)
+
+
+## Offers an arrival anchor of the current tier to the states around it.
+func _join_anchor(anchor: int) -> void:
+	var at: Vector3 = _anchor_pos[anchor]
+	var to: Vector2 = Vector2(at.x, at.z)
+	var to_surface: int = _anchor_surface[anchor]
+	var arrival_cost: float = _anchor_cost[anchor]
 	var local: Vector2 = (to - origin) / cell_size
 	var span: int = 2
 	var reach: float = cell_size * 1.5 + EPSILON
@@ -749,45 +976,38 @@ func _try_wall(state: int, from: Vector2, from_surface: int, to: Vector2, to_sur
 				continue
 			if legality.walk_result(to, there, to_surface) != MoveLegality.Result.OK:
 				continue
-			if anchor == NONE:
-				anchor = _add_anchor(
-					legality.on_surface(to, to_surface), to_surface, arrival_cost, _anchor_of(state), via,
-					legality.clearance(to, to_surface, CLEARANCE_CAP)
-				)
-				_register_anchor(anchor, to)
 			_offer_checked(next, cost, anchor)
-	if anchor == NONE:
-		# Nothing to join, but the arrival point may still be a destination
-		# (a centre on a straight ledge) or lead to one.
-		anchor = _add_anchor(
-			legality.on_surface(to, to_surface), to_surface, arrival_cost, _anchor_of(state), via,
-			legality.clearance(to, to_surface, CLEARANCE_CAP)
-		)
-		_register_anchor(anchor, to)
 
 
-## Whether an arrival anchor on `surface` within a cell of p costs no more than
-## `cost` once the way from it to p is added.
-func _arrival_near_is_as_cheap(p: Vector2, surface: int, cost: float) -> bool:
+## Whether an arrival anchor of a tier from `tier_from` to `tier_to` on
+## `surface` within a cell of p costs no more than `cost` once the way from it
+## to p is added.
+func _arrival_near_is_as_cheap(p: Vector2, surface: int, cost: float, tier_from: int, tier_to: int) -> bool:
 	var local: Vector2 = (p - origin) / cell_size
 	var cx: int = roundi(local.x)
 	var cz: int = roundi(local.y)
-	for dz: int in range(-1, 2):
-		for dx: int in range(-1, 2):
-			var nx: int = cx + dx
-			var nz: int = cz + dz
-			if nx < 0 or nz < 0 or nx >= size_x or nz >= size_z:
-				continue
-			var node: int = nz * size_x + nx
-			if not _anchors_near_node.has(node):
-				continue
-			for anchor: int in _anchors_near_node[node]:
-				if _anchor_surface[anchor] != surface:
+	for tier: int in range(tier_from, tier_to + 1):
+		for dz: int in range(-1, 2):
+			for dx: int in range(-1, 2):
+				var nx: int = cx + dx
+				var nz: int = cz + dz
+				if nx < 0 or nz < 0 or nx >= size_x or nz >= size_z:
 					continue
-				var at: Vector3 = _anchor_pos[anchor]
-				if _anchor_cost[anchor] + Vector2(at.x, at.z).distance_to(p) <= cost:
-					return true
+				var key: int = _near_key(nz * size_x + nx, tier)
+				if not _anchors_near_node.has(key):
+					continue
+				for anchor: int in _anchors_near_node[key]:
+					if _anchor_surface[anchor] != surface:
+						continue
+					var at: Vector3 = _anchor_pos[anchor]
+					if _anchor_cost[anchor] + Vector2(at.x, at.z).distance_to(p) <= cost:
+						return true
 	return false
+
+
+## Key of _anchors_near_node for a node and a tier.
+func _near_key(node: int, tier: int) -> int:
+	return tier * node_count() + node
 
 
 ## Offers a parent whose line has been checked.
@@ -845,8 +1065,9 @@ func _anchor_of(state: int) -> int:
 
 
 func _add_anchor(
-	pos: Vector3, surface: int, cost: float, prev: int, via: PackedVector3Array, clearance: float
+	pos: Vector3, surface: int, cost: float, prev: int, via: PackedVector3Array, clearance: float, tier: int = -1
 ) -> int:
+	_anchor_tier.append(_tier if tier < 0 else tier)
 	_anchor_pos.append(pos)
 	_anchor_surface.append(surface)
 	_anchor_cost.append(cost)
@@ -860,10 +1081,10 @@ func _register_anchor(anchor: int, p: Vector2) -> void:
 	var local: Vector2 = (p - origin) / cell_size
 	var nx: int = clampi(roundi(local.x), 0, size_x - 1)
 	var nz: int = clampi(roundi(local.y), 0, size_z - 1)
-	var node: int = node_index(nx, nz)
-	if not _anchors_near_node.has(node):
-		_anchors_near_node[node] = PackedInt32Array()
-	_anchors_near_node[node].append(anchor)
+	var key: int = _near_key(node_index(nx, nz), _anchor_tier[anchor])
+	if not _anchors_near_node.has(key):
+		_anchors_near_node[key] = PackedInt32Array()
+	_anchors_near_node[key].append(anchor)
 
 
 ## The surfaces a query point may be on, nearest its height first.
@@ -878,20 +1099,32 @@ func _resolve(target: Vector2, surfaces: PackedInt32Array) -> void:
 	_query_key = key
 	_query_anchor = NONE
 	_query_surface = NONE
+	_query_tier = UNREACHED
 	_query_path_ready = false
 	if _cost.is_empty() or _start_states.is_empty():
 		return
-	var best_total: float = INF
+	var stoppable: PackedInt32Array = PackedInt32Array()
 	for surface: int in surfaces:
-		if legality.point_result(target, surface) != MoveLegality.Result.OK:
+		if legality.point_result(target, surface) == MoveLegality.Result.OK:
+			stoppable.append(surface)
+	if stoppable.is_empty():
+		return
+	# The lowest tier that reaches it (ruling 8), the cheapest there.
+	for tier: int in MAX_ROLLS + 1:
+		if not _use_tier(tier):
 			continue
-		var stop_budget: float = budget - field.stop_surcharge(surface, legality.start_piece_ids) + EPSILON
-		var found: Vector2 = _best_source(target, surface, minf(stop_budget, best_total))
-		if found.y != NONE and found.x < best_total:
-			best_total = found.x
-			_query_anchor = int(found.y)
-			_query_surface = surface
-			_query_target = legality.on_surface(target, surface)
+		var best_total: float = INF
+		for surface: int in stoppable:
+			var stop_budget: float = budget - field.stop_surcharge(surface, legality.start_piece_ids) + EPSILON
+			var found: Vector2 = _best_source(target, surface, minf(stop_budget, best_total))
+			if found.y != NONE and found.x < best_total:
+				best_total = found.x
+				_query_anchor = int(found.y)
+				_query_surface = surface
+				_query_target = legality.on_surface(target, surface)
+		if _query_anchor != NONE:
+			_query_tier = tier
+			return
 
 
 ## The cheapest anchor (or state, made an anchor) on `surface` that can walk
@@ -899,9 +1132,10 @@ func _resolve(target: Vector2, surfaces: PackedInt32Array) -> void:
 func _best_source(target: Vector2, surface: int, limit: float) -> Vector2:
 	# Candidates as (total cost, anchor or -2 - state).
 	var candidates: Array[Vector2] = []
-	for k: int in _start_states:
-		if _state_surface[k] == surface:
-			candidates.append(Vector2(legality.walk_length(_start_2d, target, surface), _state_anchor[k]))
+	if _tier == 0:
+		for k: int in _start_states:
+			if _state_surface[k] == surface:
+				candidates.append(Vector2(legality.walk_length(_start_2d, target, surface), _state_anchor[k]))
 	var local: Vector2 = (target - origin) / cell_size
 	var cx: int = roundi(local.x)
 	var cz: int = roundi(local.y)
@@ -921,8 +1155,9 @@ func _best_source(target: Vector2, surface: int, limit: float) -> Vector2:
 					seen[parent] = true
 					var from: Vector2 = Vector2(_anchor_pos[parent].x, _anchor_pos[parent].z)
 					candidates.append(Vector2(_anchor_cost[parent] + legality.walk_length(from, target, surface), parent))
-			if _anchors_near_node.has(node):
-				for anchor: int in _anchors_near_node[node]:
+			var near: int = _near_key(node, _tier)
+			if _anchors_near_node.has(near):
+				for anchor: int in _anchors_near_node[near]:
 					if _anchor_surface[anchor] != surface or seen.has(anchor):
 						continue
 					seen[anchor] = true
@@ -1045,11 +1280,12 @@ func _closest_on_surface(target: Vector2, surface: int, max_distance: float) -> 
 	var anchors: Array[int] = []
 	for nz: int in range(maxi(floori(local.y) - reach_cells, 0), mini(ceili(local.y) + reach_cells, size_z - 1) + 1):
 		for nx: int in range(maxi(floori(local.x) - reach_cells, 0), mini(ceili(local.x) + reach_cells, size_x - 1) + 1):
-			var node: int = nz * size_x + nx
-			if _anchors_near_node.has(node):
-				for anchor: int in _anchors_near_node[node]:
-					if _anchor_surface[anchor] == surface:
-						anchors.append(anchor)
+			for tier: int in MAX_ROLLS + 1:
+				var key: int = _near_key(nz * size_x + nx, tier)
+				if _anchors_near_node.has(key):
+					for anchor: int in _anchors_near_node[key]:
+						if _anchor_surface[anchor] == surface:
+							anchors.append(anchor)
 	for anchor: int in anchors:
 		var p: Vector2 = Vector2(_anchor_pos[anchor].x, _anchor_pos[anchor].z)
 		if p.distance_to(target) < best.distance_to(target) and _reachable_on(p, surface):

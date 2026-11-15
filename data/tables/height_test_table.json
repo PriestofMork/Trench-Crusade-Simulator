@@ -1,5 +1,5 @@
 {
-	"description": "Test table for brief 004 (height, part 1). Sizes are [own x, height, own z] in inches; centre is the footprint centre [x, z]; turn is degrees about the vertical axis; base is the underside height.",
+	"description": "Test table for briefs 004 and 006 (height). The strip z < 10 holds the pieces for rolls (brief 006): two 4in platforms 2.5in apart, ledges of unequal height with a gap, a 5in platform to drop from, a gap too wide to jump. The 4in block and the sheer 2in wall are in the middle row. Sizes are [own x, height, own z] in inches; centre is the footprint centre [x, z]; turn is degrees about the vertical axis; base is the underside height.",
 	"terrain": [
 		{"name": "ramp to platform", "center": [8, 14], "size": [6, 2, 3], "shape": "ramp"},
 		{"name": "platform 2in", "center": [14, 14], "size": [6, 2, 6]},
@@ -18,7 +18,14 @@
 		{"name": "small crate", "center": [19.5, 38], "size": [0.6, 1, 0.6]},
 		{"name": "bridge ramp west", "center": [27, 38], "size": [6, 3.5, 3], "shape": "ramp"},
 		{"name": "bridge deck", "center": [34, 38], "size": [8, 0.5, 3], "base": 3.0},
-		{"name": "bridge ramp east", "center": [41, 38], "size": [6, 3.5, 3], "shape": "ramp", "turn": 180}
+		{"name": "bridge ramp east", "center": [41, 38], "size": [6, 3.5, 3], "shape": "ramp", "turn": 180},
+		{"name": "jump platform west 4in", "center": [5, 5], "size": [4, 4, 4]},
+		{"name": "jump platform east 4in", "center": [11.5, 5], "size": [4, 4, 4]},
+		{"name": "high ledge 4in", "center": [19, 5], "size": [4, 4, 4]},
+		{"name": "low ledge 2.5in", "center": [24.5, 5], "size": [3, 2.5, 4]},
+		{"name": "drop platform 5in", "center": [32, 5], "size": [4, 5, 4]},
+		{"name": "wide gap west 4in", "center": [39.5, 5], "size": [3, 4, 4]},
+		{"name": "wide gap east 4in", "center": [46, 5], "size": [3, 4, 4]}
 	],
 	"models": [
 		{"name": "ramp walker", "player": 0, "at": [4.3, 0, 14], "base": 32, "movement": 8},
@@ -29,6 +36,11 @@
 		{"name": "tower climber", "player": 0, "at": [24, 0, 30], "base": 32, "movement": 8},
 		{"name": "bridge walker", "player": 1, "at": [29, 0, 42.5], "base": 32, "movement": 10},
 		{"name": "enemy on the deck", "player": 1, "at": [36.5, 3.5, 38], "base": 25, "movement": 5},
-		{"name": "under the deck", "player": 0, "at": [34, 0, 33.5], "base": 32, "movement": 6}
+		{"name": "under the deck", "player": 0, "at": [34, 0, 33.5], "base": 32, "movement": 6},
+		{"name": "gap jumper", "player": 0, "at": [5.5, 4, 5], "base": 32, "movement": 6},
+		{"name": "ledge jumper", "player": 1, "at": [19.5, 4, 5], "base": 32, "movement": 6},
+		{"name": "dropper", "player": 1, "at": [32, 5, 5], "base": 32, "movement": 6},
+		{"name": "wide gap jumper", "player": 0, "at": [39.5, 4, 5], "base": 32, "movement": 6},
+		{"name": "block climber", "player": 1, "at": [6, 0, 30.5], "base": 32, "movement": 8}
 	]
 }
