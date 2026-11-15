@@ -76,6 +76,10 @@ top it is climbing to.
 
 **Where the move ends**
 - At least half of the base's area must be over the floor the model stands on.
+  The floor is the whole level surface, not one terrain piece: where pieces meet at
+  the same height (a row of sandbags, a platform built from several boxes, a ramp
+  meeting a platform), the area over all of them counts together. Ground that is
+  lower than the model's floor never counts as support.
 - Headroom: the gap between the floor and anything above it must be at least the
   model's cylinder height.
 - The base may not overlap another model's base or terrain higher than its floor.
