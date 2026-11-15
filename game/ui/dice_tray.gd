@@ -7,7 +7,8 @@ extends PanelContainer
 ## then the total and the outcome. It never rolls or decides anything.
 ## A click or a key while the dice tumble skips to the result.
 
-signal choice_answered(amount: int)
+## One count per option of the choice.
+signal choice_answered(amounts: Array[int])
 
 const TUMBLE_SECONDS: float = 0.9
 const TUMBLE_STEP_SECONDS: float = 0.07
@@ -32,6 +33,10 @@ var _elapsed: float = 0.0
 var _animating: bool = false
 var _on_done: Callable = Callable()
 var _ended_activation: bool = false
+## The counts picked so far in a prompt with several options.
+var _picked: Array[int] = []
+## What an injury roll did, in words (shown under the outcome).
+var _effect: String = ""
 
 
 func _init() -> void:
@@ -76,6 +81,7 @@ func begin(roll: ActiveRoll) -> void:
 	_result = null
 	_choice_lines.clear()
 	_ended_activation = false
+	_effect = ""
 	var request: RollRequest = roll.request
 	var who: String = "both players" if request.roller < 0 else UiStyle.player_bb(request.roller)
 	var model_text: String = "" if request.actor_id < 0 else ", model %d" % request.actor_id
@@ -99,17 +105,44 @@ func add_choice(event: GameEvent) -> void:
 		_show_breakdown(_roll.modifiers)
 
 
-## DECISION_NEEDED for a pre-roll choice: buttons 0..maximum.
+## DECISION_NEEDED for a pre-roll choice: buttons 0..maximum. With several
+## options (blood and infection markers), one row of counts per option and a
+## button to spend them.
 func ask_choice(decision: PendingDecision) -> void:
 	_clear_prompt()
 	var choice: RollChoice = decision.choice
 	_prompt_label.text = "%s: %s?" % [UiStyle.player_bb(decision.player), choice.label]
-	for amount: int in range(0, choice.maximum + 1):
-		var text: String = "None" if amount == 0 else str(amount)
-		var button: Button = UiStyle.button(text, "Spend%d" % amount)
-		button.custom_minimum_size = Vector2(52, 34)
-		button.pressed.connect(func() -> void: choice_answered.emit(amount))
-		_prompt_buttons.add_child(button)
+	if choice.options.size() <= 1:
+		for amount: int in range(0, choice.maximum + 1):
+			var text: String = "None" if amount == 0 else str(amount)
+			var button: Button = UiStyle.button(text, "Spend%d" % amount)
+			button.custom_minimum_size = Vector2(52, 34)
+			button.pressed.connect(func() -> void: choice_answered.emit([amount] as Array[int]))
+			_prompt_buttons.add_child(button)
+	else:
+		_picked.clear()
+		_picked.resize(choice.options.size())
+		var rows: VBoxContainer = VBoxContainer.new()
+		rows.name = "Rows"
+		_prompt_buttons.add_child(rows)
+		for i: int in choice.options.size():
+			var option: RollChoice.Option = choice.options[i]
+			var row: HBoxContainer = HBoxContainer.new()
+			row.add_child(UiStyle.label("%s:" % option.label, 15))
+			var group: ButtonGroup = ButtonGroup.new()
+			for amount: int in range(0, option.maximum + 1):
+				var button: Button = UiStyle.button(str(amount), "Pick%d_%d" % [i, amount])
+				button.custom_minimum_size = Vector2(40, 32)
+				button.toggle_mode = true
+				button.button_group = group
+				button.button_pressed = amount == 0
+				var index: int = i
+				button.pressed.connect(func() -> void: _picked[index] = amount)
+				row.add_child(button)
+			rows.add_child(row)
+		var spend: Button = UiStyle.button("Spend these", "SpendPicked")
+		spend.pressed.connect(func() -> void: choice_answered.emit(_picked.duplicate()))
+		rows.add_child(spend)
 	_prompt_box.visible = true
 	visible = true
 
@@ -125,6 +158,28 @@ func press_choice(amount: int) -> bool:
 		return false
 	button.pressed.emit()
 	return true
+
+
+## In a prompt with several options: picks `amounts` and presses Spend.
+func press_choices(amounts: Array[int]) -> bool:
+	var rows: Node = _prompt_buttons.get_node_or_null("Rows")
+	if rows == null:
+		return false
+	for i: int in amounts.size():
+		var button: Button = rows.find_child("Pick%d_%d" % [i, amounts[i]], true, false)
+		if button == null:
+			return false
+		button.button_pressed = true
+		button.pressed.emit()
+	(rows.get_node("SpendPicked") as Button).pressed.emit()
+	return true
+
+
+## INJURY_APPLIED: what the injury roll did, in words.
+func show_effect(text: String) -> void:
+	_effect = text
+	if not _animating and _result != null:
+		_show_outcome()
 
 
 ## ROLL_RESOLVED: tumbles, lands on the rolled values, then shows the outcome
@@ -249,6 +304,8 @@ func _show_outcome() -> void:
 			text = "[color=#%s]Success[/color]" % UiStyle.GOOD_COLOUR.to_html(false)
 		RollResult.Outcome.FAILURE:
 			text = "[color=#%s]Failure[/color]" % UiStyle.BAD_COLOUR.to_html(false)
+	if request.kind == RollRequest.Kind.INJURY and _effect != "":
+		text = "[color=#%s]%s[/color]" % [UiStyle.GOLD_COLOUR.to_html(false), _effect]
 	if _ended_activation:
 		text += "  [color=#%s]— activation ends[/color]" % UiStyle.BAD_COLOUR.to_html(false)
 	_outcome.text = text

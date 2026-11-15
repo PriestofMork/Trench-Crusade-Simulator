@@ -209,7 +209,9 @@ func _refresh_model(state: GameState, selected_id: int) -> void:
 	for kind: StringName in Markers.KINDS:
 		markers.append("%s %d" % [Markers.label(kind), model.marker_count(kind)])
 	lines.append("  ·  ".join(markers))
-	if model.down:
+	if not model.on_table():
+		lines.append("[color=#%s]Out of Action[/color] (removed from the table)" % UiStyle.BAD_COLOUR.to_html(false))
+	elif model.down:
 		lines.append("[color=#%s]Down[/color] (stands up when it activates, then moves half)" % UiStyle.BAD_COLOUR.to_html(false))
 	elif t.active_model_id == model.id and t.stood_up:
 		lines.append("Stood up this activation: half movement")

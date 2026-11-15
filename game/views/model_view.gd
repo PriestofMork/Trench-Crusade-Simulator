@@ -1,6 +1,9 @@
 class_name ModelView
 extends MeshInstance3D
 ## Draws one model as its rules cylinder: base diameter by height, coloured by owner.
+## A Down model lies on its side; an Out of Action model is not shown. Moves
+## are played back segment by segment: walks slide, climbs go straight up or
+## down the wall, jumps follow an arc and drops and falls come straight down.
 ## Only displays a ModelState; it never changes one.
 
 const PLAYER_COLOURS: Array[Color] = [
@@ -9,6 +12,10 @@ const PLAYER_COLOURS: Array[Color] = [
 ]
 const SELECTED_RING_COLOUR: Color = Color(1.0, 0.92, 0.55)
 const SLIDE_SPEED_INCHES_PER_SECOND: float = 10.0
+const FALL_SPEED_INCHES_PER_SECOND: float = 14.0
+## How far above the higher ledge a jump's arc rises, inches.
+const JUMP_ARC_HEIGHT: float = 1.0
+const ARC_STEPS: int = 12
 
 var model_id: int = -1
 var radius: float = 0.0
@@ -21,6 +28,7 @@ var _tween: Tween
 var _label: Label3D
 var _selected: bool = false
 var _activated: bool = false
+var _down: bool = false
 
 
 func setup(model: ModelState) -> void:
@@ -42,10 +50,24 @@ func setup(model: ModelState) -> void:
 	sync(model)
 
 
-## Puts the view where the model is.
+## Puts the view where the model is, upright or lying Down, and hides it
+## once it is Out of Action.
 func sync(model: ModelState) -> void:
+	visible = model.on_table()
+	_down = model.down
 	# CylinderMesh is centred on its origin; the model position is the base underside.
-	position = model.position + Vector3(0.0, height / 2.0, 0.0)
+	if _down:
+		rotation = Vector3(0.0, 0.0, PI / 2.0)
+		position = model.position + Vector3(0.0, radius, 0.0)
+		_label.position = Vector3(radius + 0.5, 0.0, 0.0)
+		_ring.position = Vector3(-radius + 0.025, 0.0, 0.0)
+		_ring.rotation = Vector3(0.0, 0.0, -PI / 2.0)
+	else:
+		rotation = Vector3.ZERO
+		position = model.position + Vector3(0.0, height / 2.0, 0.0)
+		_label.position = Vector3(0.0, height / 2.0 + 0.5, 0.0)
+		_ring.position = Vector3(0.0, -height / 2.0 + 0.025, 0.0)
+		_ring.rotation = Vector3.ZERO
 
 
 func set_selected(selected: bool) -> void:
@@ -86,23 +108,56 @@ func _apply_look() -> void:
 
 ## Animates the view along `path` (positions of the base, start first, with
 ## climbs and drops already split into their vertical and horizontal parts) at
-## one steady speed, as one motion, and calls `on_done` at the end.
+## one steady speed, as one motion, and calls `on_done` at the end. Parts
+## straight down are falls: a little faster, speeding up.
 func slide_along(path: Array[Vector3], on_done: Callable) -> void:
 	if _tween != null and _tween.is_running():
 		_tween.kill()
+	rotation = Vector3.ZERO
 	_tween = create_tween()
 	for i: int in range(1, path.size()):
-		var length: float = path[i].distance_to(path[i - 1])
+		var step: Vector3 = path[i] - path[i - 1]
+		var length: float = step.length()
 		if length < 0.0001:
 			continue
-		var duration: float = length / SLIDE_SPEED_INCHES_PER_SECOND
-		_tween.tween_property(self, "position", path[i] + Vector3(0.0, height / 2.0, 0.0), duration)
+		var falling: bool = step.y < -0.5 and Vector2(step.x, step.z).length() < 0.01
+		var speed: float = FALL_SPEED_INCHES_PER_SECOND if falling else SLIDE_SPEED_INCHES_PER_SECOND
+		var tweener: PropertyTweener = _tween.tween_property(
+			self, "position", path[i] + Vector3(0.0, height / 2.0, 0.0), length / speed
+		)
+		if falling:
+			tweener.set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
 	_tween.tween_callback(on_done)
+
+
+## Puts the view at `base` (the underside of the base), standing, without
+## reading the state: for the end of a played move, before later events
+## (going Down, Out of Action) are shown.
+func place_at(base: Vector3) -> void:
+	rotation = Vector3.ZERO
+	position = base + Vector3(0.0, height / 2.0, 0.0)
+
+
+## The points a jump from `a` to `b` passes through: an arc rising
+## JUMP_ARC_HEIGHT above the higher end (b last, a left out).
+static func jump_arc(a: Vector3, b: Vector3, to_middle_only: bool = false) -> Array[Vector3]:
+	var points: Array[Vector3] = []
+	var top: float = maxf(a.y, b.y) + JUMP_ARC_HEIGHT
+	var steps: int = ARC_STEPS / 2 if to_middle_only else ARC_STEPS
+	for k: int in range(1, steps + 1):
+		var t: float = float(k) / ARC_STEPS
+		var flat: Vector3 = a.lerp(b, t)
+		# A parabola through a.y at 0, top at the middle, b.y at 1.
+		var y: float = (1.0 - t) * (1.0 - 2.0 * t) * a.y + 4.0 * t * (1.0 - t) * top + t * (2.0 * t - 1.0) * b.y
+		points.append(Vector3(flat.x, y, flat.z))
+	return points
 
 
 ## Distance along the ray to where it hits this model's cylinder, or INF if it misses.
 ## `direction` must be normalised for the result to be in inches.
 func ray_hit_distance(origin: Vector3, direction: Vector3) -> float:
+	if not visible:
+		return INF
 	var base: Vector3 = position - Vector3(0.0, height / 2.0, 0.0)
 	var best: float = INF
 	# Side of the cylinder.

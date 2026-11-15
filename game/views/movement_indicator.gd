@@ -8,10 +8,15 @@ extends MeshInstance3D
 ## centre's area grown by the base radius), then clipped to where that surface
 ## can be seen, so the edge follows terrain, other models and the remaining
 ## movement smoothly instead of in steps.
+##
+## Destinations that can only be reached with rolls (a sheer climb, a jump, a
+## drop of 3" or more) are drawn the same way in orange: the area the base
+## edge can reach in any tier, less the blue area. Where the two meet, each
+## glows on its own side of the shared edge and the blue outline is on top.
 
-const FILL_COLOUR: Color = Color(0.15, 0.5, 1.0, 0.17)
-const GLOW_COLOUR: Color = Color(0.3, 0.65, 1.0, 0.5)
-const LINE_COLOUR: Color = Color(0.6, 0.86, 1.0, 1.0)
+## The two looks, by tier: [fill, glow, line].
+const SAFE_COLOURS: Array[Color] = [Color(0.15, 0.5, 1.0, 0.17), Color(0.3, 0.65, 1.0, 0.5), Color(0.6, 0.86, 1.0, 1.0)]
+const RISKY_COLOURS: Array[Color] = [Color(1.0, 0.5, 0.1, 0.17), Color(1.0, 0.58, 0.15, 0.55), Color(1.0, 0.75, 0.35, 1.0)]
 ## Outline width and inner glow width, inches.
 const LINE_WIDTH: float = 0.08
 const GLOW_WIDTH: float = 0.5
@@ -23,6 +28,7 @@ const LINE_HEIGHT: float = 0.035
 const MIN_POINT_SPACING: float = 0.04
 
 var _fill_material: StandardMaterial3D
+var _risky_line_material: StandardMaterial3D
 var _line_material: StandardMaterial3D
 
 
@@ -30,7 +36,8 @@ func _init() -> void:
 	name = "MovementIndicator"
 	cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	_fill_material = _make_material(0)
-	_line_material = _make_material(1)
+	_risky_line_material = _make_material(1)
+	_line_material = _make_material(2)
 
 
 ## Rebuilds the indicator for `field`, or clears it if `field` is null.
@@ -45,12 +52,26 @@ func show_field(field: ReachField, layers: Array[ReachField.Layer] = []) -> void
 	var fill_colours: PackedColorArray = PackedColorArray()
 	var line: PackedVector3Array = PackedVector3Array()
 	var line_colours: PackedColorArray = PackedColorArray()
+	var risky_line: PackedVector3Array = PackedVector3Array()
+	var risky_line_colours: PackedColorArray = PackedColorArray()
 	for layer: ReachField.Layer in layers:
-		var contour: MarchingSquares.Contour = _layer_contour(layer, field)
-		_add_fill(fill, fill_colours, contour, layer, field)
-		_add_outline(line, line_colours, contour, layer, field)
+		var safe_grown: PackedFloat32Array = _grown(layer.values, layer, field)
+		var contour: MarchingSquares.Contour = _clipped_contour(safe_grown, layer)
+		_add_fill(fill, fill_colours, contour, layer, field, SAFE_COLOURS)
+		_add_outline(line, line_colours, contour, layer, field, SAFE_COLOURS)
+		if not layer.has_risky:
+			continue
+		var any_grown: PackedFloat32Array = _grown(layer.risky_values, layer, field)
+		for k: int in any_grown.size():
+			any_grown[k] = maxf(any_grown[k], -safe_grown[k])
+		var risky: MarchingSquares.Contour = _clipped_contour(any_grown, layer)
+		_add_fill(fill, fill_colours, risky, layer, field, RISKY_COLOURS)
+		_add_outline(risky_line, risky_line_colours, risky, layer, field, RISKY_COLOURS)
 	var array_mesh: ArrayMesh = ArrayMesh.new()
-	for part: Array in [[fill, fill_colours, _fill_material], [line, line_colours, _line_material]]:
+	for part: Array in [
+		[fill, fill_colours, _fill_material], [risky_line, risky_line_colours, _risky_line_material],
+		[line, line_colours, _line_material],
+	]:
 		var vertices: PackedVector3Array = part[0]
 		if vertices.is_empty():
 			continue
@@ -63,33 +84,40 @@ func show_field(field: ReachField, layers: Array[ReachField.Layer] = []) -> void
 	mesh = array_mesh
 
 
-## Contour where the centre may end, grown by the base radius (the area the
-## base edge can touch), clipped to the visible surface. Values stay in inches
-## for the glow.
-func _layer_contour(layer: ReachField.Layer, field: ReachField) -> MarchingSquares.Contour:
-	var centre: MarchingSquares.Contour = MarchingSquares.build(layer.values, layer.size_x, layer.size_z)
+## Values whose 0 contour is where the centre may end (`values`), grown by the
+## base radius (the area the base edge can touch), in inches for the glow.
+func _grown(values: PackedFloat32Array, layer: ReachField.Layer, field: ReachField) -> PackedFloat32Array:
+	var centre: MarchingSquares.Contour = MarchingSquares.build(values, layer.size_x, layer.size_z)
 	var grown: PackedFloat32Array = MarchingSquares.grown_values(
-		layer.values, layer.size_x, layer.size_z, centre, field.base_radius() / field.cell_size
+		values, layer.size_x, layer.size_z, centre, field.base_radius() / field.cell_size
 	)
 	for k: int in grown.size():
-		grown[k] = maxf(grown[k] * field.cell_size, layer.clip[k])
-	return MarchingSquares.build(grown, layer.size_x, layer.size_z)
+		grown[k] *= field.cell_size
+	return grown
+
+
+## The contour of `grown`, clipped to where the layer's surface can be seen.
+func _clipped_contour(grown: PackedFloat32Array, layer: ReachField.Layer) -> MarchingSquares.Contour:
+	var clipped: PackedFloat32Array = grown.duplicate()
+	for k: int in clipped.size():
+		clipped[k] = maxf(clipped[k], layer.clip[k])
+	return MarchingSquares.build(clipped, layer.size_x, layer.size_z)
 
 
 func _add_fill(
 	vertices: PackedVector3Array, colours: PackedColorArray, contour: MarchingSquares.Contour,
-	layer: ReachField.Layer, field: ReachField
+	layer: ReachField.Layer, field: ReachField, look: Array[Color]
 ) -> void:
 	for k: int in contour.triangles.size():
 		vertices.append(_on_surface(_to_table(contour.triangles[k], layer, field), layer, field, FILL_HEIGHT))
 		var depth: float = maxf(-contour.triangle_values[k], 0.0)
 		var glow: float = clampf(1.0 - depth / GLOW_WIDTH, 0.0, 1.0)
-		colours.append(FILL_COLOUR.lerp(GLOW_COLOUR, glow * glow))
+		colours.append(look[0].lerp(look[1], glow * glow))
 
 
 func _add_outline(
 	vertices: PackedVector3Array, colours: PackedColorArray, contour: MarchingSquares.Contour,
-	layer: ReachField.Layer, field: ReachField
+	layer: ReachField.Layer, field: ReachField, look: Array[Color]
 ) -> void:
 	for c: int in contour.chains.size():
 		var points: PackedVector2Array = _table_points(contour.chains[c], layer, field, contour.closed[c])
@@ -111,7 +139,7 @@ func _add_outline(
 				v.append(_on_surface(corner, layer, field, LINE_HEIGHT))
 			vertices.append_array([v[0], v[1], v[2], v[0], v[2], v[3]])
 			for _k: int in 6:
-				colours.append(LINE_COLOUR)
+				colours.append(look[2])
 
 
 ## Chain in layer grid coordinates -> table points (world x, z), with

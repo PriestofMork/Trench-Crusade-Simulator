@@ -7,7 +7,9 @@ extends Node3D
 ## Left click a model: select it (a preview; the activation starts with its
 ## first action). Left click inside the blue area: take the Move action there
 ## (or make the move a Dash granted); a move may be made in several clicks
-## while it has distance left. Escape: deselect. O: override panel.
+## while it has distance left. Left click inside the orange area (only with
+## rolls): the route and its rolls are pinned and wait for Confirm (or Enter);
+## Escape cancels. Escape: deselect. O: override panel.
 ## Ctrl+Z / Ctrl+Y: undo / redo (also HUD buttons).
 ## While the dice tumble, a click or a key skips to the result.
 
@@ -32,6 +34,10 @@ var _tray: DiceTray
 var _overrides: OverridePanel
 ## When set, hover follows this 3D point instead of the mouse (for scripted screenshots).
 var _hover_override: Variant = null
+## An orange destination waiting for confirmation (ruling 7 of brief 006), or null.
+var _pinned: Variant = null
+var _confirm_panel: PanelContainer
+var _confirm_label: RichTextLabel
 
 ## Events waiting to be played back, and whether one is playing (dice, a slide).
 var _queue: Array[GameEvent] = []
@@ -96,8 +102,14 @@ func _unhandled_input(event: InputEvent) -> void:
 				undo()
 		elif key.ctrl_pressed and key.physical_keycode == KEY_Y:
 			redo()
+		elif key.physical_keycode == KEY_ENTER or key.physical_keycode == KEY_KP_ENTER:
+			if _pinned != null:
+				confirm_pinned()
 		elif key.physical_keycode == KEY_ESCAPE:
-			deselect()
+			if _pinned != null:
+				cancel_pinned()
+			else:
+				deselect()
 		elif key.physical_keycode == KEY_O:
 			toggle_overrides()
 
@@ -110,6 +122,8 @@ func _process(_delta: float) -> void:
 	_tray.position = Vector2(view.x - TRAY_WIDTH - 16.0, 16.0)
 	_overrides.size.y = 0.0
 	_overrides.position = Vector2(16.0, 150.0)
+	_confirm_panel.size = Vector2(0.0, 0.0)
+	_confirm_panel.position = Vector2((view.x - _confirm_panel.size.x) / 2.0, view.y - _confirm_panel.size.y - 24.0)
 
 
 ## Runs a command and plays back its events. Returns "" or why it was rejected.
@@ -143,6 +157,7 @@ func deselect() -> void:
 	if _selected_id != -1 and _views.has(_selected_id):
 		_views[_selected_id].set_selected(false)
 	_selected_id = -1
+	_unpin()
 	_refresh_all()
 
 
@@ -150,8 +165,60 @@ func selected_model_id() -> int:
 	return _selected_id
 
 
+## What a click on a destination does: a blue one moves at once; an orange
+## one (only with rolls) is pinned with its route and rolls and waits for
+## confirm_pinned() (ruling 7). Returns "" or why not.
+func request_move_to(point: Vector3) -> String:
+	if _selected_id == -1 or _reach == null or is_busy():
+		return "No model selected."
+	if not _reach.is_reachable(point):
+		return "Out of reach."
+	if _reach.needs_rolls(point):
+		_pin(point)
+		return ""
+	_unpin()
+	return move_selected_to(point)
+
+
+## The pinned orange destination, or null.
+func pinned_destination() -> Variant:
+	return _pinned
+
+
+## Makes the pinned move.
+func confirm_pinned() -> String:
+	if _pinned == null:
+		return "Nothing to confirm."
+	var point: Vector3 = _pinned
+	_unpin()
+	return move_selected_to(point)
+
+
+func cancel_pinned() -> void:
+	_unpin()
+	_hud.show_message("Move cancelled.")
+
+
+func _pin(point: Vector3) -> void:
+	_pinned = point
+	var labels: PackedStringArray = PackedStringArray()
+	for roll: Dictionary in _reach.rolls_to(point):
+		labels.append(String(roll["label"]))
+	_confirm_label.text = "[b]This move needs rolls[/b]\n%s\n%.1f\" of %.1f\"" % [
+		"  -  ".join(labels), _reach.cost_to(point), _reach.budget
+	]
+	_confirm_panel.visible = true
+
+
+func _unpin() -> void:
+	_pinned = null
+	if _confirm_panel != null:
+		_confirm_panel.visible = false
+
+
 ## Moves the selected model to `point` along the reach field's path: answers
-## a pending move, or takes the Move action first. Returns "" or why not.
+## a pending move, or takes the Move action first. Orange destinations move
+## without asking here (request_move_to() asks). Returns "" or why not.
 func move_selected_to(point: Vector3) -> String:
 	if _selected_id == -1 or _reach == null or is_busy():
 		return "No model selected."
@@ -197,10 +264,10 @@ func roll_off() -> String:
 	return send(RollOffCommand.new(0))
 
 
-func answer_roll_choice(amount: int) -> String:
+func answer_roll_choice(amounts: Array[int]) -> String:
 	if state.pending == null:
 		return "Nothing to answer."
-	return send(RollChoiceCommand.new(state.pending.player, amount))
+	return send(RollChoiceCommand.new(state.pending.player, 0, amounts))
 
 
 ## Takes the last step back (not a rule command: core restores its snapshot).
@@ -239,6 +306,7 @@ func redo() -> String:
 
 
 func _after_restore(message: String) -> void:
+	_unpin()
 	_clear_reach()
 	_tray.close()
 	# A restored roll waiting on a marker prompt shows it again.
@@ -334,10 +402,30 @@ func _play(event: GameEvent) -> void:
 			_tray.show_result(event.result, _resume)
 		GameEvent.Kind.MODEL_MOVED:
 			_play_move(event)
+		GameEvent.Kind.MODEL_FELL:
+			_play_fall(event)
+		GameEvent.Kind.MOVE_ROLL_POINT:
+			_hud.show_message("Model %d: %s" % [event.model_id, event.data.get("roll", "")])
+		GameEvent.Kind.INJURY_APPLIED:
+			_tray.show_effect(String(event.data.get("short", "")))
+			_hud.show_message(String(event.data.get("text", "")))
+		GameEvent.Kind.MODEL_WENT_DOWN:
+			_views[event.model_id].sync(state.get_model(event.model_id))
+		GameEvent.Kind.MODEL_OUT_OF_ACTION:
+			_views[event.model_id].visible = false
+			if _selected_id == event.model_id:
+				deselect()
+		GameEvent.Kind.MARKERS_GAINED:
+			_hud.show_message("Model %d: %s (+%d)" % [event.model_id, event.data.get("reason", ""), int(event.data.get("count", 0))])
+		GameEvent.Kind.MOVE_STOPPED:
+			_hud.show_message("Model %d's move stops: %s." % [event.model_id, event.data.get("reason", "")])
 		GameEvent.Kind.ACTIVATION_ENDED:
-			if event.data.get("reason", "") == "failed risky roll":
+			var reason: String = event.data.get("reason", "")
+			if reason in ["failed risky roll", "went Down", "taken Out of Action"]:
 				_tray.note_activation_ended()
-				_hud.show_message("Failed risky roll: model %d's activation ends." % event.model_id)
+				_hud.show_message("Model %d %s: its activation ends." % [
+					event.model_id, "failed a risky roll" if reason == "failed risky roll" else reason
+				])
 		GameEvent.Kind.OVERRIDE_APPLIED:
 			_hud.show_message("Override: %s" % event.data.get("text", ""))
 		GameEvent.Kind.PLAYER_TO_ACT:
@@ -358,15 +446,57 @@ func _play_move(event: GameEvent) -> void:
 	var path: Array[Vector3] = []
 	for point: Vector3 in raw:
 		path.append(point)
-	var shown: Array[Vector3] = path
-	if _reach != null and _reach.model_id == event.model_id:
-		shown = _display_path(path[0], path.slice(1))
+	var shown: Array[Vector3] = _shown_path(path, event.data.get("kinds", []))
+	_clear_reach()
+	_playing = true
+	var end: Vector3 = path[path.size() - 1]
+	_views[event.model_id].slide_along(shown, func() -> void:
+		_views[event.model_id].place_at(end)
+		_resume()
+	)
+
+
+## A failed jump: up the arc to over the gap, straight down, and over to
+## where it can stop.
+func _play_fall(event: GameEvent) -> void:
+	var from: Vector3 = event.data["from"]
+	var over: Vector3 = event.data["over"]
+	var to: Vector3 = event.data["to"]
+	var shown: Array[Vector3] = [from]
+	var far: Vector3 = from + (over - from) * 2.0
+	shown.append_array(ModelView.jump_arc(from, far, true))
+	shown.append(Vector3(over.x, to.y, over.z))
+	shown.append(to)
+	_hud.show_message("Model %d falls %.1f\"." % [event.model_id, float(event.data["height"])])
 	_clear_reach()
 	_playing = true
 	_views[event.model_id].slide_along(shown, func() -> void:
-		_views[event.model_id].sync(state.get_model(event.model_id))
+		_views[event.model_id].place_at(to)
 		_resume()
 	)
+
+
+## A path as it is drawn and played, from its points (start first) and how
+## each segment is taken: climbs straight up or down the wall at the touch
+## point, drops off the edge then straight down, jumps along an arc.
+func _shown_path(path: Array[Vector3], kinds: Array) -> Array[Vector3]:
+	var shown: Array[Vector3] = [path[0]]
+	for i: int in range(1, path.size()):
+		var a: Vector3 = path[i - 1]
+		var b: Vector3 = path[i]
+		var kind: Transitions.Kind = kinds[i - 1] if i - 1 < kinds.size() else Transitions.Kind.WALK
+		match kind:
+			Transitions.Kind.GAP_JUMP:
+				shown.append_array(ModelView.jump_arc(a, b))
+			Transitions.Kind.WALK, Transitions.Kind.NONE:
+				shown.append(b)
+			_:
+				if b.y > a.y:
+					shown.append(Vector3(a.x, b.y, a.z))
+				else:
+					shown.append(Vector3(b.x, a.y, b.z))
+				shown.append(b)
+	return shown
 
 
 ## Brings every view in line with the state once the events are played.
@@ -427,6 +557,7 @@ func _refresh_reach() -> void:
 
 
 func _clear_reach() -> void:
+	_unpin()
 	_reach = null
 	_reach_key = ""
 	_indicator.show_field(null)
@@ -478,7 +609,9 @@ func _on_left_click(screen_position: Vector2) -> void:
 		return
 	var destination: Variant = _destination_for(_floor_point(screen_position))
 	if destination != null:
-		move_selected_to(destination)
+		request_move_to(destination)
+	elif _pinned != null:
+		cancel_pinned()
 	else:
 		deselect()
 
@@ -487,7 +620,9 @@ func _update_hover() -> void:
 	if _selected_id == -1 or _reach == null or is_busy():
 		return
 	var point: Variant = _hover_override
-	if point == null:
+	if _pinned != null:
+		point = _pinned
+	elif point == null:
 		var mouse: Vector2 = get_viewport().get_mouse_position()
 		if _pick_model(mouse) != -1 or _over_ui(mouse):
 			_preview.hide_all()
@@ -506,10 +641,20 @@ func _update_hover() -> void:
 		target = destination
 		path = _reach.path_to(target)
 	var shown: Array[Vector3] = []
+	var rolls: Array[Dictionary] = []
 	if not path.is_empty():
 		shown = _display_path(model.position, path)
 		shown.remove_at(0)
-	_preview.show_preview(model.position, shown, target, model.base_radius_inches(), _floor_normal(target))
+		rolls = _reach.rolls_to(target)
+	_preview.show_preview(
+		model.position, shown, target, model.base_radius_inches(), _floor_normal(target), not rolls.is_empty()
+	)
+	var roll_points: Array[Vector3] = []
+	var labels: PackedStringArray = PackedStringArray()
+	for roll: Dictionary in rolls:
+		roll_points.append(roll["at"])
+		labels.append(String(roll["label"]))
+	_preview.show_roll_points(roll_points)
 	if path.is_empty():
 		_distance_label.visible = false
 		return
@@ -518,6 +663,10 @@ func _update_hover() -> void:
 	_distance_label.text = "%.1f\" of %.1f\"" % [cost, _reach.budget]
 	if surcharge > 0.0:
 		_distance_label.text += "  (incl. %.1f\" to stop on the obstacle)" % surcharge
+	if not labels.is_empty():
+		_distance_label.text = "  -  ".join(labels) + "\n" + _distance_label.text
+		if _pinned == null:
+			_distance_label.text += "   (click to confirm)"
 	_distance_label.position = _camera.unproject_position(target) + Vector2(18, -34)
 	_distance_label.visible = true
 
@@ -527,23 +676,15 @@ func _over_ui(screen_position: Vector2) -> bool:
 	return hovered != null and hovered.mouse_filter == Control.MOUSE_FILTER_STOP and hovered.get_global_rect().has_point(screen_position)
 
 
-## The path as it is drawn and played: each climb or drop split into its
-## vertical part and its horizontal part (up: rise at the wall, then onto the
-## top; down: step off the edge, then drop), so it reads as one motion along
-## the ground, straight up the wall and on.
+## The path as it is drawn in the preview: see _shown_path(), with the kinds
+## of its segments from the reach field.
 func _display_path(start: Vector3, path: Array[Vector3]) -> Array[Vector3]:
-	var shown: Array[Vector3] = [start]
-	var previous: Vector3 = start
-	for point: Vector3 in path:
-		var kind: Transitions.Kind = _reach.segment_kind(previous, point)
-		if kind != Transitions.Kind.WALK and kind != Transitions.Kind.NONE:
-			if point.y > previous.y:
-				shown.append(Vector3(previous.x, point.y, previous.z))
-			else:
-				shown.append(Vector3(point.x, previous.y, point.z))
-		shown.append(point)
-		previous = point
-	return shown
+	var points: Array[Vector3] = [start]
+	points.append_array(path)
+	var kinds: Array = []
+	for i: int in range(1, points.size()):
+		kinds.append(_reach.segment_kind(points[i - 1], points[i]))
+	return _shown_path(points, kinds)
 
 
 ## Up direction of the floor a destination is on.
@@ -651,8 +792,28 @@ func _build_overlays() -> void:
 
 	_tray = DiceTray.new()
 	_tray.custom_minimum_size = Vector2(TRAY_WIDTH, 0)
-	_tray.choice_answered.connect(func(amount: int) -> void: answer_roll_choice(amount))
+	_tray.choice_answered.connect(func(amounts: Array[int]) -> void: answer_roll_choice(amounts))
 	layer.add_child(_tray)
+
+	_confirm_panel = PanelContainer.new()
+	_confirm_panel.name = "ConfirmMove"
+	_confirm_panel.add_theme_stylebox_override("panel", UiStyle.panel(Color(1.0, 0.55, 0.15)))
+	var confirm_box: VBoxContainer = VBoxContainer.new()
+	_confirm_panel.add_child(confirm_box)
+	_confirm_label = UiStyle.rich(17)
+	_confirm_label.custom_minimum_size = Vector2(460, 0)
+	confirm_box.add_child(_confirm_label)
+	var confirm_row: HBoxContainer = HBoxContainer.new()
+	confirm_row.add_theme_constant_override("separation", 8)
+	confirm_box.add_child(confirm_row)
+	var confirm: Button = UiStyle.button("Confirm (Enter)", "ConfirmMoveButton")
+	confirm.pressed.connect(func() -> void: confirm_pinned())
+	confirm_row.add_child(confirm)
+	var cancel: Button = UiStyle.button("Cancel (Esc)", "CancelMoveButton")
+	cancel.pressed.connect(func() -> void: cancel_pinned())
+	confirm_row.add_child(cancel)
+	_confirm_panel.visible = false
+	layer.add_child(_confirm_panel)
 
 	_overrides = OverridePanel.new()
 	_overrides.send = func(command: Command) -> void: send(command)
