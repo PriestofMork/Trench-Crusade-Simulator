@@ -22,12 +22,11 @@ Open a new session in this folder and say:
 | `001-project-skeleton.md` | Done |
 | `002-select-and-move.md` | Done |
 | `003-indicator-and-friendly-models.md` | Done |
-| `004-height-part-1.md` | Ready |
+| `004-height-part-1.md` | Done |
+| `005-turns-rolls-dash.md` | Ready |
 
 ## Planned next (not yet written)
 
-- 005: turns and activations, the roll pipeline with a first dice tray, and Dash as
-  the first risky roll
 - 006: height, part 2: sheer climbs, jumping gaps, drops of 3" or more and falling,
   with the orange "needs a risky roll" area in the indicator
 - 007: charge, the 1" melee zone and retreat (free attacks stubbed until attacks exist)
