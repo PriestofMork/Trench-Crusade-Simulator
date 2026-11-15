@@ -47,10 +47,6 @@ func test_rejects_through_terrain() -> void:
 	assert_eq(command.rejection, MoveCommand.Rejection.BLOCKED)
 
 
-func test_ignores_terrain_that_does_not_block() -> void:
-	pending("Replaced by the low obstacle rules later in brief 004.")
-
-
 func test_rejects_ending_inside_terrain() -> void:
 	state.execute(PlaceTerrainCommand.new(Vector2(14, 10), Vector3(2, 2, 2)))
 	assert_ne(state.execute(_move([Vector3(14, 0, 10)])), "")

@@ -269,3 +269,57 @@ static func _circle_triangle_signed_area(a: Vector2, b: Vector2, r: float) -> fl
 
 static func _sector(u: Vector2, v: Vector2, r2: float) -> float:
 	return 0.5 * r2 * atan2(u.cross(v), u.dot(v))
+
+
+## Closest point on segment a-b to p.
+static func closest_point_on_segment(p: Vector2, a: Vector2, b: Vector2) -> Vector2:
+	var ab: Vector2 = b - a
+	var length_sq: float = ab.length_squared()
+	if length_sq <= 0.0:
+		return a
+	return a + ab * clampf((p - a).dot(ab) / length_sq, 0.0, 1.0)
+
+
+## Closest point of a convex polygon's boundary to p (for p outside, the
+## closest point of the polygon).
+static func closest_point_on_polygon(p: Vector2, polygon: PackedVector2Array) -> Vector2:
+	var best: Vector2 = polygon[0]
+	var best_distance: float = INF
+	var n: int = polygon.size()
+	for i: int in n:
+		var q: Vector2 = closest_point_on_segment(p, polygon[i], polygon[(i + 1) % n])
+		var d: float = p.distance_squared_to(q)
+		if d < best_distance:
+			best_distance = d
+			best = q
+	return best
+
+
+## The part of segment a-b inside a convex polygon, as parameters (t0, t1) along
+## it (0 at a, 1 at b); t0 > t1 if it misses.
+static func segment_polygon_clip(a: Vector2, b: Vector2, polygon: PackedVector2Array) -> Vector2:
+	var t0: float = 0.0
+	var t1: float = 1.0
+	var n: int = polygon.size()
+	if n < 3:
+		return Vector2(1, 0)
+	var orientation: float = signf(polygon_double_area(polygon))
+	var d: Vector2 = b - a
+	for i: int in n:
+		var e0: Vector2 = polygon[i]
+		var edge: Vector2 = polygon[(i + 1) % n] - e0
+		# Inside where orientation * edge.cross(q - e0) >= 0, linear along the segment.
+		var f0: float = orientation * edge.cross(a - e0)
+		var df: float = orientation * edge.cross(d)
+		if absf(df) < 1e-12:
+			if f0 < 0.0:
+				return Vector2(1, 0)
+			continue
+		var t: float = -f0 / df
+		if df > 0.0:
+			t0 = maxf(t0, t)
+		else:
+			t1 = minf(t1, t)
+		if t0 > t1:
+			return Vector2(1, 0)
+	return Vector2(t0, t1)

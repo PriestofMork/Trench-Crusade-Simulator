@@ -1,7 +1,9 @@
 class_name PlaceModelCommand
 extends Command
-## Adds a model to the table. Rejected if its base would overlap another
-## model's cylinder or reach past the table edge. Touching is allowed.
+## Adds a model to the table. Rejected unless it stands somewhere a move could
+## end (see HeightField.stoppable(): on a floor, half the base supported,
+## headroom, no overlap with terrain), or if its cylinder would overlap another
+## model's or its base reach past the table edge. Touching is allowed.
 
 const EPSILON: float = 0.0001
 
@@ -42,6 +44,14 @@ func validate(state: GameState) -> String:
 		return "Base would lie outside the table."
 
 	var height: float = BaseSizes.height_inches(base_mm)
+	var field: HeightField = state.height_field()
+	var at: Vector2 = Vector2(position.x, position.z)
+	var standing: bool = false
+	for surface: int in field.surfaces_matching(at, position.y):
+		if field.stoppable(at, surface, radius, height):
+			standing = true
+	if not standing:
+		return "The model must stand on a floor where it could end a move."
 	for other: ModelState in state.models:
 		if _cylinders_overlap(position, radius, height, other):
 			return "Base would overlap model %d." % other.id

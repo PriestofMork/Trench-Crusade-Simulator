@@ -1,0 +1,34 @@
+{
+	"description": "Test table for brief 004 (height, part 1). Sizes are [own x, height, own z] in inches; centre is the footprint centre [x, z]; turn is degrees about the vertical axis; base is the underside height.",
+	"terrain": [
+		{"name": "ramp to platform", "center": [8, 14], "size": [6, 2, 3], "shape": "ramp"},
+		{"name": "platform 2in", "center": [14, 14], "size": [6, 2, 6]},
+		{"name": "narrow beam", "center": [20, 14], "size": [6, 2, 0.3]},
+		{"name": "wall 2in", "center": [26, 14], "size": [6, 2, 3]},
+		{"name": "block 4in", "center": [6, 26], "size": [3, 4, 3]},
+		{"name": "sheer wall 2in", "center": [14, 26], "size": [5, 2, 1], "tag": "sheer"},
+		{"name": "tower 4in", "center": [24, 26], "size": [3, 4, 3]},
+		{"name": "tower ladder", "center": [24, 27.7], "size": [2, 4, 0.4], "tag": "ladder"},
+		{"name": "steep ramp", "center": [32, 26], "size": [0.8, 3, 3], "shape": "ramp"},
+		{"name": "impassable rock", "center": [39, 26], "size": [3, 0.8, 3], "tag": "impassable"},
+		{"name": "sandbag 1", "center": [5, 38], "size": [2, 0.5, 0.75]},
+		{"name": "sandbag 2", "center": [7, 38], "size": [2, 0.5, 0.75]},
+		{"name": "sandbag 3", "center": [9, 38], "size": [2, 0.5, 0.75]},
+		{"name": "crate 1in", "center": [15, 38], "size": [3, 1, 3]},
+		{"name": "small crate", "center": [19.5, 38], "size": [0.6, 1, 0.6]},
+		{"name": "bridge ramp west", "center": [27, 38], "size": [6, 3.5, 3], "shape": "ramp"},
+		{"name": "bridge deck", "center": [34, 38], "size": [8, 0.5, 3], "base": 3.0},
+		{"name": "bridge ramp east", "center": [41, 38], "size": [6, 3.5, 3], "shape": "ramp", "turn": 180}
+	],
+	"models": [
+		{"name": "ramp walker", "player": 0, "at": [3.5, 0, 14], "base": 32, "movement": 8},
+		{"name": "wall climber", "player": 0, "at": [26, 0, 18], "base": 32, "movement": 6},
+		{"name": "on the platform", "player": 0, "at": [15, 2, 15], "base": 25, "movement": 5},
+		{"name": "sandbag crosser", "player": 0, "at": [7, 0, 41], "base": 25, "movement": 6},
+		{"name": "crate stopper", "player": 0, "at": [15, 0, 42], "base": 40, "movement": 6},
+		{"name": "tower climber", "player": 0, "at": [24, 0, 30], "base": 32, "movement": 8},
+		{"name": "bridge walker", "player": 1, "at": [29, 0, 42.5], "base": 32, "movement": 10},
+		{"name": "enemy on the deck", "player": 1, "at": [36.5, 3.5, 38], "base": 25, "movement": 5},
+		{"name": "under the deck", "player": 0, "at": [34, 0, 33.5], "base": 32, "movement": 6}
+	]
+}

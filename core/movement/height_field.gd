@@ -122,8 +122,9 @@ var cells_z: int
 var _passing: Array = []
 ## Model height -> per surface obstacles for headroom.
 var _headroom_cache: Dictionary = {}
-## Per cell, the surfaces whose footprint may reach it.
+## Per cell, the surfaces and the solids whose footprint may reach it.
 var _cell_surfaces: Array[PackedInt32Array] = []
+var _cell_solids: Array[PackedInt32Array] = []
 
 
 func _init(state: GameState) -> void:
@@ -201,8 +202,18 @@ func stop_surcharge(surface: int, start_piece_ids: PackedInt32Array) -> float:
 ## The surfaces that are a floor at p: p is over the surface's footprint and
 ## nothing fills the layer just above it there. Lowest first.
 func surfaces_at(p: Vector2) -> PackedInt32Array:
+	var cell: int = _cell_at(p)
+	var candidates: PackedInt32Array = _cell_surfaces[cell]
 	var result: PackedInt32Array = PackedInt32Array()
-	for index: int in _candidates_at(p):
+	if _cell_solids[cell].is_empty():
+		# Only the tabletop near here, with nothing on it.
+		if (
+			p.x >= -EDGE_SLACK and p.y >= -EDGE_SLACK
+			and p.x <= table_width + EDGE_SLACK and p.y <= table_depth + EDGE_SLACK
+		):
+			result.append(TABLE)
+		return result
+	for index: int in candidates:
 		var surface: Surface = surfaces[index]
 		if PlanarGeometry.point_polygon_signed_distance(p, surface.polygon) > EDGE_SLACK:
 			continue
@@ -210,6 +221,27 @@ func surfaces_at(p: Vector2) -> PackedInt32Array:
 			continue
 		result.append(index)
 	return _sorted_by_height(result, p)
+
+
+## Whether `surface` is a floor at p (the same test as surfaces_at()).
+func is_floor(p: Vector2, surface: int) -> bool:
+	var s: Surface = surfaces[surface]
+	if PlanarGeometry.point_polygon_signed_distance(p, s.polygon) > EDGE_SLACK:
+		return false
+	return not _is_covered(s, p)
+
+
+## Signed distance from p to the part of `surface` that can be seen from above
+## nearby: its footprint, less where terrain fills the layer above it. Positive
+## outside. For clipping what is drawn on the surface. Values below -cap may
+## be returned as -cap.
+func visible_value(p: Vector2, surface: int, cap: float = 2.0) -> float:
+	var best: float = maxf(PlanarGeometry.point_polygon_signed_distance(p, surfaces[surface].polygon), -cap)
+	for obstacle: Obstacle in _passing[surface]:
+		if p.distance_to(obstacle.center) - obstacle.reach >= -best:
+			continue
+		best = maxf(best, -PlanarGeometry.point_polygon_signed_distance(p, obstacle.polygon))
+	return best
 
 
 ## The surfaces at p whose height there is within `tolerance` of y.
@@ -239,18 +271,31 @@ func cell_floors(ix: int, iz: int) -> Array[Floor]:
 func passable(p: Vector2, surface: int, radius: float) -> bool:
 	if not base_on_table(p, radius):
 		return false
-	if PlanarGeometry.point_polygon_signed_distance(p, surfaces[surface].polygon) > EDGE_SLACK:
+	if (
+		surface != TABLE
+		and PlanarGeometry.point_polygon_signed_distance(p, surfaces[surface].polygon) > EDGE_SLACK
+	):
 		return false
 	return not _overlaps_any(p, radius, _passing[surface])
 
 
 ## Whether a model may end a move there, as far as terrain goes.
 func stoppable(p: Vector2, surface: int, radius: float, model_height: float) -> bool:
-	if not passable(p, surface, radius):
-		return false
+	return passable(p, surface, radius) and supported_with_headroom(p, surface, radius, model_height)
+
+
+## The part of stoppable() that passable() does not cover: half the base area
+## supported, and headroom.
+func supported_with_headroom(p: Vector2, surface: int, radius: float, model_height: float) -> bool:
 	if support_fraction(p, surface, radius) < SUPPORT_TO_STOP - 1e-6:
 		return false
-	return not _overlaps_any(p, radius, headroom_obstacles(model_height)[surface])
+	return headroom_clear(p, surface, radius, headroom_obstacles(model_height))
+
+
+## Whether the base at p on `surface` is clear of `per_surface` obstacles (from
+## headroom_obstacles()).
+func headroom_clear(p: Vector2, surface: int, radius: float, per_surface: Array) -> bool:
+	return not _overlaps_any(p, radius, per_surface[surface])
 
 
 ## Share of the base's area over the surface's footprint, 0 to 1.
@@ -272,12 +317,13 @@ func support_fraction(p: Vector2, surface: int, radius: float) -> float:
 func walk_clear(a: Vector2, b: Vector2, surface: int, radius: float) -> bool:
 	if not base_on_table(a, radius) or not base_on_table(b, radius):
 		return false
-	var polygon: PackedVector2Array = surfaces[surface].polygon
-	if (
-		PlanarGeometry.point_polygon_signed_distance(a, polygon) > EDGE_SLACK
-		or PlanarGeometry.point_polygon_signed_distance(b, polygon) > EDGE_SLACK
-	):
-		return false
+	if surface != TABLE:
+		var polygon: PackedVector2Array = surfaces[surface].polygon
+		if (
+			PlanarGeometry.point_polygon_signed_distance(a, polygon) > EDGE_SLACK
+			or PlanarGeometry.point_polygon_signed_distance(b, polygon) > EDGE_SLACK
+		):
+			return false
 	for obstacle: Obstacle in _passing[surface]:
 		if PlanarGeometry.point_segment_distance(obstacle.center, a, b) >= obstacle.reach + radius:
 			continue
@@ -471,7 +517,8 @@ static func _straight_edge_offset(fraction: float, radius: float) -> float:
 
 func _is_covered(surface: Surface, p: Vector2) -> bool:
 	var h: float = surface.height_at(p)
-	for solid: Solid in solids:
+	for index: int in _cell_solids[_cell_at(p)]:
+		var solid: Solid = solids[index]
 		if solid.piece == surface.piece:
 			continue
 		if solid.bottom > h + TOLERANCE or solid.top_at(p) <= h + TOLERANCE:
@@ -485,26 +532,43 @@ func _build_cells() -> void:
 	cells_x = maxi(ceili(table_width / CELL_SIZE), 1)
 	cells_z = maxi(ceili(table_depth / CELL_SIZE), 1)
 	_cell_surfaces.resize(cells_x * cells_z)
+	_cell_solids.resize(cells_x * cells_z)
 	var everywhere: PackedInt32Array = PackedInt32Array([TABLE])
 	for k: int in _cell_surfaces.size():
 		_cell_surfaces[k] = everywhere.duplicate()
 	for surface: Surface in surfaces:
 		if surface.is_table():
 			continue
-		var slack: float = EDGE_SLACK + EPSILON
-		var x_from: int = clampi(floori((surface.bounds_min.x - slack) / CELL_SIZE), 0, cells_x - 1)
-		var x_to: int = clampi(floori((surface.bounds_max.x + slack) / CELL_SIZE), 0, cells_x - 1)
-		var z_from: int = clampi(floori((surface.bounds_min.y - slack) / CELL_SIZE), 0, cells_z - 1)
-		var z_to: int = clampi(floori((surface.bounds_max.y + slack) / CELL_SIZE), 0, cells_z - 1)
-		for iz: int in range(z_from, z_to + 1):
-			for ix: int in range(x_from, x_to + 1):
-				_cell_surfaces[iz * cells_x + ix].append(surface.index)
+		for cell: int in _cells_over(surface.polygon):
+			_cell_surfaces[cell].append(surface.index)
+	for index: int in solids.size():
+		for cell: int in _cells_over(solids[index].polygon):
+			_cell_solids[cell].append(index)
 
 
-func _candidates_at(p: Vector2) -> PackedInt32Array:
+## The cells a polygon's bounding box (plus the edge slack) touches.
+func _cells_over(polygon: PackedVector2Array) -> PackedInt32Array:
+	var low: Vector2 = Vector2(INF, INF)
+	var high: Vector2 = Vector2(-INF, -INF)
+	for corner: Vector2 in polygon:
+		low = low.min(corner)
+		high = high.max(corner)
+	var slack: float = EDGE_SLACK + EPSILON
+	var x_from: int = clampi(floori((low.x - slack) / CELL_SIZE), 0, cells_x - 1)
+	var x_to: int = clampi(floori((high.x + slack) / CELL_SIZE), 0, cells_x - 1)
+	var z_from: int = clampi(floori((low.y - slack) / CELL_SIZE), 0, cells_z - 1)
+	var z_to: int = clampi(floori((high.y + slack) / CELL_SIZE), 0, cells_z - 1)
+	var result: PackedInt32Array = PackedInt32Array()
+	for iz: int in range(z_from, z_to + 1):
+		for ix: int in range(x_from, x_to + 1):
+			result.append(iz * cells_x + ix)
+	return result
+
+
+func _cell_at(p: Vector2) -> int:
 	var ix: int = clampi(floori(p.x / CELL_SIZE), 0, cells_x - 1)
 	var iz: int = clampi(floori(p.y / CELL_SIZE), 0, cells_z - 1)
-	return _cell_surfaces[iz * cells_x + ix]
+	return iz * cells_x + ix
 
 
 func _sorted_by_height(indices: PackedInt32Array, p: Vector2) -> PackedInt32Array:

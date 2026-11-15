@@ -1,155 +1,324 @@
 class_name MoveLegality
 extends RefCounted
-## Where one model's base may be, and along which segments it may move, on flat
-## ground. Built once from the state for the moving model; shared by MoveCommand
-## (which validates paths) and ReachField (which finds them), so the two always
-## agree.
+## Where one model's base may be, and how it may get from one point to the
+## next, across the floors of the height field. Built once from the state for
+## the moving model; shared by MoveCommand (which validates paths) and ReachField
+## (which finds them), so the two always agree: ReachField only ever builds a
+## path from steps this class accepts, and MoveCommand checks a path with
+## segment_cost() and stop_surcharge() from here.
 ##
-## Everything is on the table plane: a Vector2 is (world x, world z) and is the
-## centre of the moving model's base. Touching is allowed; overlapping is not.
-## Being exactly 1" from an enemy is allowed; closer is not.
+## A position is a table point (Vector2: world x, z) plus a surface of the
+## HeightField; its height is the surface's height there. Waypoints are 3D
+## points, matched to the surfaces whose height there is within
+## HeightField.TOLERANCE.
 ##
-## Friendly bases may be passed through but not stood on: segment_result() and
-## clearance() ignore them (they describe passing), point_result() and
-## friendly_clearance() include them (they describe where a move may end).
+## A path is a list of segments, each either
+## - a walk: both ends on one surface, the base passable all along it; it
+##   costs its length along the surface (3D); or
+## - a wall crossing: from a point where the base touches a wall to the point
+##   on top directly above the touch point (going up), or the reverse (going
+##   down). It costs what Transitions says for that wall.
+## Changing between two surfaces at the same height needs no segment of its
+## own: one walk ends on the first and the next starts on the second.
+##
+## Models: friendly bases may be passed through but not stood on; no point of
+## the way may come within 1" of an enemy, measured in 3D between the two
+## cylinders (so a model on a bridge is not held back by an enemy far below).
+## Touching is allowed; overlapping is not. Exactly 1" from an enemy is allowed.
 
-enum Result { OK, OFF_TABLE, TERRAIN, MODEL, ENEMY }
+enum Result {
+	OK, OFF_TABLE, TERRAIN, MODEL, ENEMY, NO_FLOOR, NOT_SUPPORTED, HEADROOM, NEEDS_ROLL, NO_WAY
+}
 
 const EPSILON: float = 0.0001
 ## A model may only come within this distance of an enemy (edge to edge) by charging.
 const ENEMY_DISTANCE_INCHES: float = 1.0
+## How exactly a wall crossing must start at the touch point and end above it.
+const TOUCH_SLACK: float = 0.002
 
 ## Radius of the moving model's base, inches.
 var radius: float
+## Height of its cylinder, inches.
+var model_height: float
+var field: HeightField
+## The model's position, and the surfaces it stands on there.
+var start: Vector3
+var start_surfaces: PackedInt32Array
+## Pieces the model starts on (-1 for the table), for the low obstacle surcharge.
+var start_piece_ids: PackedInt32Array = PackedInt32Array()
 
-var _centre_min: Vector2
-var _centre_max: Vector2
+## Why the last check failed, and the kind of the last segment that passed.
+var last_result: Result = Result.OK
+var last_kind: Transitions.Kind = Transitions.Kind.NONE
 
-## Enemy models, as circles the moving centre must stay outside of all the way.
-var _circle_centres: PackedVector2Array = PackedVector2Array()
-## Minimum centre-to-centre distance for each circle.
-var _circle_min_distances: PackedFloat64Array = PackedFloat64Array()
-
-## Friendly models, as circles the moving centre may cross but not end inside.
+## Per surface, the terrain in the way of this model's cylinder when standing.
+var _headroom: Array = []
+var _enemy_centres: PackedVector2Array = PackedVector2Array()
+var _enemy_bottoms: PackedFloat64Array = PackedFloat64Array()
+var _enemy_tops: PackedFloat64Array = PackedFloat64Array()
+var _enemy_radii: PackedFloat64Array = PackedFloat64Array()
 var _friend_centres: PackedVector2Array = PackedVector2Array()
-var _friend_min_distances: PackedFloat64Array = PackedFloat64Array()
-
-## Blocking terrain footprints.
-var _rect_centres: PackedVector2Array = PackedVector2Array()
-var _rect_half_extents: PackedVector2Array = PackedVector2Array()
-var _rect_rotations: PackedFloat64Array = PackedFloat64Array()
-## Centre-to-corner distance plus the base radius: a quick reject for segments.
-var _rect_reach: PackedFloat64Array = PackedFloat64Array()
-var _rect_cos: PackedFloat64Array = PackedFloat64Array()
-var _rect_sin: PackedFloat64Array = PackedFloat64Array()
+var _friend_bottoms: PackedFloat64Array = PackedFloat64Array()
+var _friend_tops: PackedFloat64Array = PackedFloat64Array()
+var _friend_radii: PackedFloat64Array = PackedFloat64Array()
 
 
-func _init(state: GameState, model: ModelState) -> void:
+func _init(state: GameState, model: ModelState, p_field: HeightField = null) -> void:
 	radius = model.base_radius_inches()
-	_centre_min = Vector2(radius, radius)
-	_centre_max = Vector2(state.table_width - radius, state.table_depth - radius)
+	model_height = model.height_inches()
+	field = p_field if p_field != null else state.height_field()
+	_headroom = field.headroom_obstacles(model_height)
+	start = model.position
+	start_surfaces = surfaces_at(start)
+	for s: int in start_surfaces:
+		start_piece_ids.append(field.surface_piece_id(s))
 	for other: ModelState in state.models:
 		if other.id == model.id:
 			continue
 		var centre: Vector2 = Vector2(other.position.x, other.position.z)
-		var min_distance: float = radius + other.base_radius_inches()
 		if other.player != model.player:
-			_circle_centres.append(centre)
-			_circle_min_distances.append(min_distance + ENEMY_DISTANCE_INCHES)
+			_enemy_centres.append(centre)
+			_enemy_bottoms.append(other.position.y)
+			_enemy_tops.append(other.position.y + other.height_inches())
+			_enemy_radii.append(other.base_radius_inches())
 		else:
 			_friend_centres.append(centre)
-			_friend_min_distances.append(min_distance)
-	for piece: TerrainPiece in state.terrain:
-		_rect_centres.append(piece.footprint_center)
-		_rect_half_extents.append(piece.footprint_half_extents())
-		_rect_rotations.append(piece.rotation)
-		_rect_reach.append(piece.footprint_half_extents().length() + radius)
-		_rect_cos.append(cos(piece.rotation))
-		_rect_sin.append(sin(piece.rotation))
+			_friend_bottoms.append(other.position.y)
+			_friend_tops.append(other.position.y + other.height_inches())
+			_friend_radii.append(other.base_radius_inches())
 
 
-## Whether a move may end with the base centre at p: passing_result() and no
-## overlap with a friendly base either.
-func point_result(p: Vector2) -> Result:
-	var result: Result = passing_result(p)
+## The surfaces a 3D point is on (lowest first).
+func surfaces_at(p: Vector3) -> PackedInt32Array:
+	return field.surfaces_matching(Vector2(p.x, p.z), p.y, HeightField.TOLERANCE)
+
+
+## The point on `surface` above or below the table point p.
+func on_surface(p: Vector2, surface: int) -> Vector3:
+	return Vector3(p.x, field.surface_height(surface, p), p.y)
+
+
+## Whether the base may be at p on `surface` while moving (friendly bases ignored).
+func passing_result(p: Vector2, surface: int) -> Result:
+	var y: float = field.surface_height(surface, p)
+	if field.passable(p, surface, radius) and _enemies_clear(p, p, y, y):
+		return Result.OK
+	if not field.base_on_table(p, radius):
+		return Result.OFF_TABLE
+	if PlanarGeometry.point_polygon_signed_distance(p, field.surfaces[surface].polygon) > HeightField.EDGE_SLACK:
+		return Result.NO_FLOOR
+	if not field.passable(p, surface, radius):
+		return Result.TERRAIN
+	return Result.ENEMY
+
+
+## Whether a move may end with the base centre at p on `surface`.
+func point_result(p: Vector2, surface: int) -> Result:
+	var result: Result = passing_result(p, surface)
 	if result != Result.OK:
 		return result
+	return stop_result_if_passing(p, surface)
+
+
+## point_result() for a position already known to pass passing_result().
+func stop_result_if_passing(p: Vector2, surface: int) -> Result:
+	if field.support_fraction(p, surface, radius) < HeightField.SUPPORT_TO_STOP - 1e-6:
+		return Result.NOT_SUPPORTED
+	if not field.headroom_clear(p, surface, radius, _headroom):
+		return Result.HEADROOM
+	var y: float = field.surface_height(surface, p)
 	for i: int in _friend_centres.size():
-		if p.distance_to(_friend_centres[i]) < _friend_min_distances[i] - EPSILON:
+		if p.distance_to(_friend_centres[i]) >= radius + _friend_radii[i] - EPSILON:
+			continue
+		if y < _friend_tops[i] - EPSILON and _friend_bottoms[i] < y + model_height - EPSILON:
 			return Result.MODEL
 	return Result.OK
 
 
-## Whether the base may be at p while moving (friendly bases ignored).
-func passing_result(p: Vector2) -> Result:
-	if not _inside_table(p):
+## Whether the base may walk straight from a to b on `surface`.
+func walk_result(a: Vector2, b: Vector2, surface: int) -> Result:
+	if field.walk_clear(a, b, surface, radius) and _enemies_clear(
+		a, b, field.surface_height(surface, a), field.surface_height(surface, b)
+	):
+		return Result.OK
+	if not field.base_on_table(a, radius) or not field.base_on_table(b, radius):
 		return Result.OFF_TABLE
-	for i: int in _rect_centres.size():
-		if PlanarGeometry.circle_overlaps_rect(
-			p, radius, _rect_centres[i], _rect_half_extents[i], _rect_rotations[i], EPSILON
-		):
-			return Result.TERRAIN
-	for i: int in _circle_centres.size():
-		if p.distance_to(_circle_centres[i]) < _circle_min_distances[i] - EPSILON:
-			return Result.ENEMY
-	return Result.OK
+	var polygon: PackedVector2Array = field.surfaces[surface].polygon
+	if (
+		PlanarGeometry.point_polygon_signed_distance(a, polygon) > HeightField.EDGE_SLACK
+		or PlanarGeometry.point_polygon_signed_distance(b, polygon) > HeightField.EDGE_SLACK
+	):
+		return Result.NO_FLOOR
+	if not field.walk_clear(a, b, surface, radius):
+		return Result.TERRAIN
+	return Result.ENEMY
 
 
-## Whether the base may move in a straight line from a to b, ends included.
-## Friendly bases are ignored: check where the move ends with point_result().
-func segment_result(a: Vector2, b: Vector2) -> Result:
-	# The legal region for the centre on the table is a rectangle, which is
-	# convex, so checking both ends is enough.
-	if not _inside_table(a) or not _inside_table(b):
-		return Result.OFF_TABLE
-	for i: int in _rect_centres.size():
-		if PlanarGeometry.point_segment_distance(_rect_centres[i], a, b) >= _rect_reach[i]:
-			continue
-		if PlanarGeometry.swept_circle_overlaps_rect(
-			a, b, radius, _rect_centres[i], _rect_half_extents[i], _rect_rotations[i], EPSILON
-		):
-			return Result.TERRAIN
-	for i: int in _circle_centres.size():
-		if PlanarGeometry.swept_circle_within(
-			a, b, _circle_centres[i], _circle_min_distances[i], EPSILON
-		):
-			return Result.ENEMY
-	return Result.OK
+## Cost of walking from a to b on `surface`: the length along the surface.
+func walk_length(a: Vector2, b: Vector2, surface: int) -> float:
+	return on_surface(a, surface).distance_to(on_surface(b, surface))
 
 
-## How far the centre at p is from the nearest position passing_result()
-## rejects: positive when legal, negative when illegal. It changes by at most the distance moved, so a
-## segment whose ends both have clearance of at least half its length is legal.
-## Values above `cap` may be returned as `cap`, which lets far obstacles be skipped.
-func clearance(p: Vector2, cap: float = INF) -> float:
-	var best: float = minf(
-		minf(minf(p.x - _centre_min.x, _centre_max.x - p.x), minf(p.y - _centre_min.y, _centre_max.y - p.y)),
-		cap
+## Cost of crossing a wall from u on surface su to v on surface sv, or INF if
+## that is not a legal roll-free crossing (last_result says why). See the class
+## notes: one end is where the base touches the wall, the other is on top,
+## directly above the touch point.
+func wall_cost(u: Vector2, su: int, v: Vector2, sv: int) -> float:
+	last_kind = Transitions.Kind.NONE
+	var yu: float = field.surface_height(su, u)
+	var yv: float = field.surface_height(sv, v)
+	var going_up: bool = yv > yu
+	var high_surface: int = sv if going_up else su
+	var low_surface: int = su if going_up else sv
+	var high: Vector2 = v if going_up else u
+	var low: Vector2 = u if going_up else v
+	var high_y: float = maxf(yu, yv)
+	var low_y: float = minf(yu, yv)
+	var wall_height: float = high_y - low_y
+	last_result = Result.NO_WAY
+	if wall_height <= HeightField.TOLERANCE:
+		return INF
+	var piece: TerrainPiece = field.surfaces[high_surface].piece
+	if piece == null:
+		return INF
+	var polygon: PackedVector2Array = field.surfaces[high_surface].polygon
+	# The low end touches the wall, the high end is on its top edge, a base radius away.
+	var horizontal: float = low.distance_to(high)
+	if (
+		absf(horizontal - radius) > TOUCH_SLACK
+		or PlanarGeometry.point_polygon_signed_distance(low, polygon) < radius - TOUCH_SLACK
+		or PlanarGeometry.point_polygon_signed_distance(high, polygon) > HeightField.EDGE_SLACK
+	):
+		return INF
+	# The wall reaches down to the low floor.
+	if piece.base_height > low_y + HeightField.TOLERANCE:
+		return INF
+	# Going down lands on the first floor beneath.
+	if not going_up:
+		for s: int in field.surfaces_at(low):
+			var y: float = field.surface_height(s, low)
+			if y > low_y + HeightField.TOLERANCE and y < high_y - HeightField.TOLERANCE:
+				return INF
+	var kind: Transitions.Kind = Transitions.roll_free_wall_kind(
+		going_up, wall_height, piece.tag, going_up and field.is_low_obstacle(high_surface)
 	)
-	for i: int in _rect_centres.size():
-		var d: Vector2 = p - _rect_centres[i]
-		# The box is no nearer than its centre minus its corner distance.
-		if d.length() - _rect_reach[i] >= best:
+	if kind == Transitions.Kind.NONE:
+		var options: Array[Transitions.Kind] = Transitions.wall_options(
+			going_up, wall_height, piece.tag, going_up and field.is_low_obstacle(high_surface)
+		)
+		last_result = Result.NEEDS_ROLL if not options.is_empty() else Result.NO_WAY
+		return INF
+	var result: Result = passing_result(low, low_surface)
+	if result == Result.OK:
+		result = passing_result(high, high_surface)
+	if result == Result.OK and not _enemies_clear(low, high, low_y, high_y):
+		result = Result.ENEMY
+	if result != Result.OK:
+		last_result = result
+		return INF
+	last_result = Result.OK
+	last_kind = kind
+	return Transitions.wall_cost(kind, horizontal, wall_height)
+
+
+## Cost of one path segment between two 3D points, whichever legal way it is
+## taken (the cheapest if there are several), or INF if there is none;
+## last_result then says why, last_kind says how it was taken otherwise.
+func segment_cost(u: Vector3, v: Vector3) -> float:
+	var su_list: PackedInt32Array = surfaces_at(u)
+	var sv_list: PackedInt32Array = surfaces_at(v)
+	var u2: Vector2 = Vector2(u.x, u.z)
+	var v2: Vector2 = Vector2(v.x, v.z)
+	var best: float = INF
+	var best_kind: Transitions.Kind = Transitions.Kind.NONE
+	var reason: Result = Result.NO_FLOOR
+	for s: int in su_list:
+		if not sv_list.has(s):
 			continue
-		# Inlined PlanarGeometry.point_rect_signed_distance(), with cached cos and sin.
-		var c: float = _rect_cos[i]
-		var s: float = _rect_sin[i]
-		var half: Vector2 = _rect_half_extents[i]
-		var qx: float = absf(d.x * c - d.y * s) - half.x
-		var qy: float = absf(d.x * s + d.y * c) - half.y
-		var outside: float = sqrt(maxf(qx, 0.0) * maxf(qx, 0.0) + maxf(qy, 0.0) * maxf(qy, 0.0))
-		best = minf(best, outside + minf(maxf(qx, qy), 0.0) - radius)
-	for i: int in _circle_centres.size():
-		best = minf(best, p.distance_to(_circle_centres[i]) - _circle_min_distances[i])
+		var walk: Result = walk_result(u2, v2, s)
+		if walk == Result.OK:
+			var length: float = walk_length(u2, v2, s)
+			if length < best:
+				best = length
+				best_kind = Transitions.Kind.WALK
+		else:
+			reason = walk
+	for su: int in su_list:
+		for sv: int in sv_list:
+			if su == sv:
+				continue
+			var cost: float = wall_cost(u2, su, v2, sv)
+			if cost < best:
+				best = cost
+				best_kind = last_kind
+			elif cost == INF and (reason == Result.NO_FLOOR or last_result == Result.NEEDS_ROLL):
+				reason = last_result
+	if best < INF:
+		last_result = Result.OK
+		last_kind = best_kind
+	else:
+		last_result = reason
+		last_kind = Transitions.Kind.NONE
 	return best
 
 
-## Like clearance(), but only for the friendly bases a move may not end on.
-## min(clearance(p), friendly_clearance(p)) is the clearance for point_result().
-func friendly_clearance(p: Vector2, cap: float = INF) -> float:
-	var best: float = cap
+## Like segment_cost(), but only as a walk on one surface (INF otherwise).
+func walk_cost(u: Vector3, v: Vector3) -> float:
+	var sv_list: PackedInt32Array = surfaces_at(v)
+	var u2: Vector2 = Vector2(u.x, u.z)
+	var v2: Vector2 = Vector2(v.x, v.z)
+	var best: float = INF
+	for s: int in surfaces_at(u):
+		if sv_list.has(s) and walk_result(u2, v2, s) == Result.OK:
+			best = minf(best, walk_length(u2, v2, s))
+	return best
+
+
+## Whether a move may end at p, and what it pays on top of its path for
+## stopping there (a low obstacle's height). INF if it may not end there;
+## last_result then says why.
+func stop_surcharge(p: Vector3) -> float:
+	var p2: Vector2 = Vector2(p.x, p.z)
+	var best: float = INF
+	var reason: Result = Result.NO_FLOOR
+	for s: int in surfaces_at(p):
+		var result: Result = point_result(p2, s)
+		if result == Result.OK:
+			best = minf(best, field.stop_surcharge(s, start_piece_ids))
+		else:
+			reason = result
+	last_result = Result.OK if best < INF else reason
+	return best
+
+
+## A lower bound on how far the centre at p on `surface` can move and stay
+## passable, capped at `cap` (see HeightField.clearance()). Only meaningful on
+## flat surfaces; on a slope it is -1 so nothing is skipped on its strength.
+func clearance(p: Vector2, surface: int, cap: float = INF) -> float:
+	if field.surfaces[surface].gradient != Vector2.ZERO:
+		return -1.0
+	var best: float = field.clearance(p, surface, radius, cap)
+	var y: float = field.surface_height(surface, p)
+	for i: int in _enemy_centres.size():
+		var limit: float = _enemy_limit(i, y, y)
+		if limit > 0.0:
+			best = minf(best, p.distance_to(_enemy_centres[i]) - limit)
+	return best
+
+
+## Roughly the signed distance from p on `surface` to the edge of where the
+## model may stop: positive where point_result() is OK. For drawing outlines
+## and snapping, never for legality.
+func stand_value(p: Vector2, surface: int, cap: float = INF) -> float:
+	var best: float = field.stand_value(p, surface, radius, model_height, cap)
+	var y: float = field.surface_height(surface, p)
+	for i: int in _enemy_centres.size():
+		var limit: float = _enemy_limit(i, y, y)
+		if limit > 0.0:
+			best = minf(best, p.distance_to(_enemy_centres[i]) - limit)
 	for i: int in _friend_centres.size():
-		best = minf(best, p.distance_to(_friend_centres[i]) - _friend_min_distances[i])
+		if y < _friend_tops[i] - EPSILON and _friend_bottoms[i] < y + model_height - EPSILON:
+			best = minf(best, p.distance_to(_friend_centres[i]) - radius - _friend_radii[i])
 	return best
 
 
@@ -165,13 +334,44 @@ static func describe(result: Result) -> String:
 			return "Blocked: the move may not end with the base overlapping another model."
 		Result.ENEMY:
 			return "Too close to an enemy: only a charge may come within 1\"."
+		Result.NO_FLOOR:
+			return "Blocked: there is no floor to move on there."
+		Result.NOT_SUPPORTED:
+			return "Cannot stop there: less than half the base would be supported."
+		Result.HEADROOM:
+			return "Cannot stop there: not enough headroom for the model."
+		Result.NEEDS_ROLL:
+			return "That needs a roll (a sheer climb, a jump or a drop), which is not available yet."
+		Result.NO_WAY:
+			return "Blocked: there is no way from one floor to the other there."
 	return "Illegal move."
 
 
-func _inside_table(p: Vector2) -> bool:
-	return (
-		p.x >= _centre_min.x - EPSILON
-		and p.y >= _centre_min.y - EPSILON
-		and p.x <= _centre_max.x + EPSILON
-		and p.y <= _centre_max.y + EPSILON
-	)
+## Whether the base moving in a straight line from a (height ya) to b (height
+## yb) stays at least 1" from every enemy cylinder. Conservative between the
+## ends: the closest vertical approach over the whole height range is used.
+func _enemies_clear(a: Vector2, b: Vector2, ya: float, yb: float) -> bool:
+	var low: float = minf(ya, yb)
+	var high: float = maxf(ya, yb)
+	for i: int in _enemy_centres.size():
+		var limit: float = _enemy_limit(i, low, high)
+		if limit <= 0.0:
+			continue
+		if PlanarGeometry.point_segment_distance(_enemy_centres[i], a, b) < limit - EPSILON:
+			return false
+	return true
+
+
+## The centre-to-centre distance the mover must keep from enemy i while its base
+## is somewhere between heights low and high, or 0 if the cylinders are 1" or
+## more apart vertically anyway.
+func _enemy_limit(i: int, low: float, high: float) -> float:
+	var gap: float = 0.0
+	if _enemy_bottoms[i] > high + model_height:
+		gap = _enemy_bottoms[i] - (high + model_height)
+	elif low > _enemy_tops[i]:
+		gap = low - _enemy_tops[i]
+	if gap >= ENEMY_DISTANCE_INCHES:
+		return 0.0
+	var horizontal: float = sqrt(ENEMY_DISTANCE_INCHES * ENEMY_DISTANCE_INCHES - gap * gap)
+	return radius + _enemy_radii[i] + horizontal

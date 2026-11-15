@@ -15,6 +15,9 @@ var dice: Dice
 
 var _next_model_id: int = 1
 var _next_terrain_id: int = 1
+## The height field for the current terrain, built when first asked for.
+## Derived data only: dropped whenever terrain is added.
+var _height_field: HeightField = null
 
 
 func _init(
@@ -54,6 +57,14 @@ func add_model(
 	return model
 
 
+## The terrain as layered floors. Built from `terrain` on first use and kept
+## until the terrain changes; never changed by callers.
+func height_field() -> HeightField:
+	if _height_field == null:
+		_height_field = HeightField.new(self)
+	return _height_field
+
+
 ## Only for commands: adds a terrain piece and returns it.
 func add_terrain(
 	footprint_center: Vector2,
@@ -69,4 +80,5 @@ func add_terrain(
 	)
 	_next_terrain_id += 1
 	terrain.append(piece)
+	_height_field = null
 	return piece
