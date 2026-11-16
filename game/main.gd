@@ -9,7 +9,9 @@ extends Node3D
 ## (or make the move a Dash granted); a move may be made in several clicks
 ## while it has distance left. Left click inside the orange area (only with
 ## rolls): the route and its rolls are pinned and wait for Confirm (or Enter);
-## Escape cancels. Escape: deselect. O: override panel.
+## Escape cancels. C (or the HUD button): switch the selected model's descent
+## mode between Drop and Climb down, which redraws its area. Escape:
+## deselect. O: override panel.
 ## Ctrl+Z / Ctrl+Y: undo / redo (also HUD buttons).
 ## While the dice tumble, a click or a key skips to the result.
 
@@ -26,6 +28,12 @@ var _views: Dictionary[int, ModelView] = {}
 var _selected_id: int = -1
 var _reach: ReachField
 var _reach_key: String = ""
+## Built reach fields by key (model, budget, position, descent mode), each
+## [field, layers, indicator mesh], so switching the descent mode back or
+## selecting a model again is instant. Emptied whenever the state changes.
+var _reach_cache: Dictionary[String, Array] = {}
+## Descent mode per model id (Drop if not set).
+var _descent: Dictionary[int, Transitions.DescentMode] = {}
 var _indicator: MovementIndicator
 var _preview: PathPreview
 var _distance_label: Label
@@ -110,6 +118,8 @@ func _unhandled_input(event: InputEvent) -> void:
 				cancel_pinned()
 			else:
 				deselect()
+		elif key.physical_keycode == KEY_C and not key.ctrl_pressed:
+			toggle_descent_mode()
 		elif key.physical_keycode == KEY_O:
 			toggle_overrides()
 
@@ -133,6 +143,7 @@ func send(command: Command) -> String:
 		_hud.show_message("[color=#%s]%s[/color]" % [UiStyle.BAD_COLOUR.to_html(false), result.error])
 		_refresh_all()
 		return result.error
+	_state_changed()
 	_hud.show_message("")
 	_queue.append_array(result.events)
 	_pump()
@@ -230,7 +241,7 @@ func move_selected_to(point: Vector3) -> String:
 		var error: String = send(BeginActionCommand.new(model.player, model.id, CLICK_ACTION))
 		if error != "":
 			return error
-	return send(MoveCommand.new(state.pending.player, model.id, path))
+	return send(MoveCommand.new(state.pending.player, model.id, path, _reach.descent_mode))
 
 
 ## Takes an action with the selected model (the HUD's action buttons).
@@ -281,6 +292,7 @@ func undo() -> String:
 	if not state.undo():
 		_hud.show_message("Nothing to undo.")
 		return "Nothing to undo."
+	_state_changed()
 	_after_restore("Undone.")
 	return ""
 
@@ -296,6 +308,7 @@ func redo() -> String:
 		_hud.show_message("Nothing to redo.")
 		return "Nothing to redo."
 	var result: CommandResult = state.redo()
+	_state_changed()
 	if not result.ok():
 		_hud.show_message(result.error)
 		return result.error
@@ -324,6 +337,34 @@ func _wait_for_reach_task() -> void:
 		WorkerThreadPool.wait_for_task_completion(_reach_task)
 		_reach_task = -1
 		_built_field = null
+
+
+## The selected model's descent mode (how drops of 3" or more are taken).
+func descent_mode() -> Transitions.DescentMode:
+	return _descent.get(_selected_id, Transitions.DescentMode.DROP)
+
+
+## Switches the selected model between Drop and Climb down and redraws its area.
+func toggle_descent_mode() -> void:
+	if _selected_id == -1 or is_busy():
+		return
+	var mode: Transitions.DescentMode = Transitions.DescentMode.CLIMB_DOWN
+	if descent_mode() == Transitions.DescentMode.CLIMB_DOWN:
+		mode = Transitions.DescentMode.DROP
+	_descent[_selected_id] = mode
+	_hud.show_message("Descent: %s" % _descent_name(mode))
+	_refresh_all()
+
+
+static func _descent_name(mode: Transitions.DescentMode) -> String:
+	return "Climb down" if mode == Transitions.DescentMode.CLIMB_DOWN else "Drop"
+
+
+## The state changed: built reach fields no longer hold, and the status line
+## shows what core waits for now (even while events still play back).
+func _state_changed() -> void:
+	_reach_cache.clear()
+	_hud.refresh_status(state)
 
 
 func toggle_overrides() -> void:
@@ -508,7 +549,7 @@ func _refresh_all() -> void:
 		var view: ModelView = _views[model.id]
 		view.sync(model)
 		view.show_status(model, state.turn.has_activated(model.id), state.turn.active_model_id == model.id)
-	_hud.refresh(state, _selected_id)
+	_hud.refresh(state, _selected_id, descent_mode())
 	_overrides.refresh(state, _selected_id)
 	_refresh_reach()
 
@@ -539,11 +580,18 @@ func _refresh_reach() -> void:
 		_clear_reach()
 		return
 	var model: ModelState = state.get_model(_selected_id)
-	var key: String = "%d|%.3f|%s" % [_selected_id, budget, str(model.position)]
+	var mode: Transitions.DescentMode = descent_mode()
+	var key: String = "%d|%.3f|%s|%d" % [_selected_id, budget, str(model.position), mode]
 	if key == _reach_key:
 		return
 	_clear_reach()
 	_reach_key = key
+	if _reach_cache.has(key):
+		var cached: Array = _reach_cache[key]
+		_reach = cached[0]
+		_indicator.mesh = cached[2]
+		print("Reach field for model %d (%.1f\", %s): from the cache" % [_selected_id, budget, _descent_name(mode)])
+		return
 	if _reach_task != -1:
 		# A stale build: let it finish, its result is dropped in _collect_reach().
 		WorkerThreadPool.wait_for_task_completion(_reach_task)
@@ -553,7 +601,7 @@ func _refresh_reach() -> void:
 	state.height_field()
 	_reach_task_key = key
 	_reach_started_usec = Time.get_ticks_usec()
-	_reach_task = WorkerThreadPool.add_task(_build_reach.bind(_selected_id, budget))
+	_reach_task = WorkerThreadPool.add_task(_build_reach.bind(_selected_id, budget, mode))
 
 
 func _clear_reach() -> void:
@@ -567,8 +615,8 @@ func _clear_reach() -> void:
 
 ## On a worker thread: only reads positions and terrain, which do not change
 ## while a field is being built (nothing can move without one).
-func _build_reach(id: int, budget: float) -> void:
-	var field: ReachField = ReachField.new(state, id, budget)
+func _build_reach(id: int, budget: float, mode: Transitions.DescentMode) -> void:
+	var field: ReachField = ReachField.new(state, id, budget, ReachField.CELL_SIZE, mode)
 	var layers: Array[ReachField.Layer] = field.contour_layers()
 	_built_mutex.lock()
 	_built_field = field
@@ -591,9 +639,10 @@ func _collect_reach() -> void:
 	var computed: int = Time.get_ticks_usec()
 	_reach = field
 	_indicator.show_field(field, layers)
-	print("Reach field for model %d (%.1f\"): %d states, %.1f ms on a worker, indicator mesh %.1f ms" % [
-		field.model_id, field.budget, field.state_count(), (computed - _reach_started_usec) / 1000.0,
-		(Time.get_ticks_usec() - computed) / 1000.0
+	_reach_cache[_reach_key] = [field, layers, _indicator.mesh]
+	print("Reach field for model %d (%.1f\", %s): %d states, %.1f ms on a worker, indicator mesh %.1f ms" % [
+		field.model_id, field.budget, _descent_name(field.descent_mode), field.state_count(),
+		(computed - _reach_started_usec) / 1000.0, (Time.get_ticks_usec() - computed) / 1000.0
 	])
 
 
@@ -687,6 +736,26 @@ func _display_path(start: Vector3, path: Array[Vector3]) -> Array[Vector3]:
 	return _shown_path(points, kinds)
 
 
+## Up direction of the floor under a base at `base` (for tilting the views):
+## the surface at that height whose footprint the centre is deepest inside,
+## level if there is none (on a wall, in the air). A base half over a ledge
+## takes its own floor's tilt. Reads terrain only.
+func _floor_up_at(base: Vector3) -> Vector3:
+	var field: HeightField = state.height_field()
+	var p: Vector2 = Vector2(base.x, base.z)
+	var best: int = -1
+	var best_depth: float = INF
+	for s: int in field.surfaces_matching(p, base.y, 0.02):
+		var depth: float = field.surfaces[s].shape.signed_distance(p)
+		if depth < best_depth:
+			best_depth = depth
+			best = s
+	if best == -1:
+		return Vector3.UP
+	var gradient: Vector2 = field.surfaces[best].gradient
+	return Vector3(-gradient.x, 1.0, -gradient.y).normalized()
+
+
 ## Up direction of the floor a destination is on.
 func _floor_normal(point: Vector3) -> Vector3:
 	if _reach == null:
@@ -756,6 +825,7 @@ func _build_terrain_views() -> void:
 func _build_model_views() -> void:
 	for model: ModelState in state.models:
 		var view: ModelView = ModelView.new()
+		view.floor_normal = _floor_up_at
 		view.setup(model)
 		_models_root.add_child(view)
 		_views[model.id] = view
@@ -789,6 +859,7 @@ func _build_overlays() -> void:
 	_hud.roll_off_pressed.connect(func() -> void: roll_off())
 	_hud.undo_pressed.connect(func() -> void: undo())
 	_hud.redo_pressed.connect(func() -> void: redo())
+	_hud.descent_pressed.connect(func() -> void: toggle_descent_mode())
 
 	_tray = DiceTray.new()
 	_tray.custom_minimum_size = Vector2(TRAY_WIDTH, 0)

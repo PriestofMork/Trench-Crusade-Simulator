@@ -29,6 +29,20 @@ var _label: Label3D
 var _selected: bool = false
 var _activated: bool = false
 var _down: bool = false
+## Where the underside of the base is, and the up direction it is drawn
+## with (tilted to sit flush on a slope; presentation only).
+var _base: Vector3 = Vector3.ZERO
+var _up: Vector3 = Vector3.UP
+## Given a base position, the up direction of the floor there (set by main).
+var floor_normal: Callable = Callable()
+
+## The underside of the base; the view follows it, tilting to the floor.
+var base_position: Vector3:
+	get:
+		return _base
+	set(value):
+		_base = value
+		_apply_transform()
 
 
 func setup(model: ModelState) -> void:
@@ -56,6 +70,7 @@ func sync(model: ModelState) -> void:
 	visible = model.on_table()
 	_down = model.down
 	# CylinderMesh is centred on its origin; the model position is the base underside.
+	_base = model.position
 	if _down:
 		rotation = Vector3(0.0, 0.0, PI / 2.0)
 		position = model.position + Vector3(0.0, radius, 0.0)
@@ -63,8 +78,8 @@ func sync(model: ModelState) -> void:
 		_ring.position = Vector3(-radius + 0.025, 0.0, 0.0)
 		_ring.rotation = Vector3(0.0, 0.0, -PI / 2.0)
 	else:
-		rotation = Vector3.ZERO
-		position = model.position + Vector3(0.0, height / 2.0, 0.0)
+		_up = _target_up()
+		_apply_transform()
 		_label.position = Vector3(0.0, height / 2.0 + 0.5, 0.0)
 		_ring.position = Vector3(0.0, -height / 2.0 + 0.025, 0.0)
 		_ring.rotation = Vector3.ZERO
@@ -113,7 +128,7 @@ func _apply_look() -> void:
 func slide_along(path: Array[Vector3], on_done: Callable) -> void:
 	if _tween != null and _tween.is_running():
 		_tween.kill()
-	rotation = Vector3.ZERO
+	_down = false
 	_tween = create_tween()
 	for i: int in range(1, path.size()):
 		var step: Vector3 = path[i] - path[i - 1]
@@ -122,9 +137,7 @@ func slide_along(path: Array[Vector3], on_done: Callable) -> void:
 			continue
 		var falling: bool = step.y < -0.5 and Vector2(step.x, step.z).length() < 0.01
 		var speed: float = FALL_SPEED_INCHES_PER_SECOND if falling else SLIDE_SPEED_INCHES_PER_SECOND
-		var tweener: PropertyTweener = _tween.tween_property(
-			self, "position", path[i] + Vector3(0.0, height / 2.0, 0.0), length / speed
-		)
+		var tweener: PropertyTweener = _tween.tween_property(self, "base_position", path[i], length / speed)
 		if falling:
 			tweener.set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
 	_tween.tween_callback(on_done)
@@ -134,8 +147,35 @@ func slide_along(path: Array[Vector3], on_done: Callable) -> void:
 ## reading the state: for the end of a played move, before later events
 ## (going Down, Out of Action) are shown.
 func place_at(base: Vector3) -> void:
-	rotation = Vector3.ZERO
-	position = base + Vector3(0.0, height / 2.0, 0.0)
+	_down = false
+	_base = base
+	_apply_transform()
+
+
+## Eases the tilt towards the floor under the base, so it changes smoothly
+## while moving (from level to a ramp and back).
+func _process(delta: float) -> void:
+	if _down or not visible:
+		return
+	var target: Vector3 = _target_up()
+	if _up.is_equal_approx(target):
+		return
+	_up = _up.slerp(target, clampf(delta * 12.0, 0.0, 1.0)).normalized()
+	_apply_transform()
+
+
+func _target_up() -> Vector3:
+	if not floor_normal.is_valid():
+		return Vector3.UP
+	return floor_normal.call(_base)
+
+
+## Upright or tilted to `_up`, the base underside at `_base` (not when Down).
+func _apply_transform() -> void:
+	if _down:
+		return
+	var tilt: Basis = Basis(Quaternion(Vector3.UP, _up))
+	transform = Transform3D(tilt, _base + _up * (height / 2.0))
 
 
 ## The points a jump from `a` to `b` passes through: an arc rising
@@ -158,7 +198,7 @@ static func jump_arc(a: Vector3, b: Vector3, to_middle_only: bool = false) -> Ar
 func ray_hit_distance(origin: Vector3, direction: Vector3) -> float:
 	if not visible:
 		return INF
-	var base: Vector3 = position - Vector3(0.0, height / 2.0, 0.0)
+	var base: Vector3 = _base
 	var best: float = INF
 	# Side of the cylinder.
 	var ox: float = origin.x - base.x

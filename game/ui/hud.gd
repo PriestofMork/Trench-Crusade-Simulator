@@ -11,6 +11,7 @@ signal first_player_chosen(first: int)
 signal roll_off_pressed
 signal undo_pressed
 signal redo_pressed
+signal descent_pressed
 
 var _turn_label: RichTextLabel
 var _decision_label: RichTextLabel
@@ -27,6 +28,7 @@ var _message: RichTextLabel
 var _help: Label
 var _action_buttons: Dictionary[StringName, Button] = {}
 var _undo_button: Button
+var _descent_button: Button
 var _redo_button: Button
 
 
@@ -73,6 +75,10 @@ func _init() -> void:
 	_actions_box.name = "Actions"
 	_actions_box.add_theme_constant_override("separation", 6)
 	model_box.add_child(_actions_box)
+	_descent_button = UiStyle.button("Descent: Drop (C)", "DescentButton")
+	_descent_button.tooltip_text = "How drops of 3\" or more are taken: Drop (free, injury roll) or Climb down (pays the height, risky roll). C switches."
+	_descent_button.pressed.connect(func() -> void: descent_pressed.emit())
+	model_box.add_child(_descent_button)
 	_stay_button = UiStyle.button("Finish move", "StayButton")
 	_stay_button.tooltip_text = "End the move here; movement left over is lost"
 	_stay_button.pressed.connect(func() -> void: stay_pressed.emit())
@@ -121,8 +127,11 @@ func _process(_delta: float) -> void:
 
 
 ## Redraws everything from the state. `selected_id` is the previewed model or -1.
-func refresh(state: GameState, selected_id: int) -> void:
-	_refresh_status(state)
+func refresh(
+	state: GameState, selected_id: int, descent: Transitions.DescentMode = Transitions.DescentMode.DROP
+) -> void:
+	_descent_button.text = "Descent: %s (C)" % ("Climb down" if descent == Transitions.DescentMode.CLIMB_DOWN else "Drop")
+	refresh_status(state)
 	_refresh_prompt(state)
 	_refresh_model(state, selected_id)
 
@@ -140,7 +149,8 @@ func press(button_name: String) -> bool:
 	return true
 
 
-func _refresh_status(state: GameState) -> void:
+## The turn line, what core waits for now, and undo and redo.
+func refresh_status(state: GameState) -> void:
 	var t: TurnState = state.turn
 	_undo_button.disabled = not state.can_undo()
 	_redo_button.disabled = not state.can_redo()
