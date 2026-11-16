@@ -28,6 +28,7 @@ The reverse of blood markers. Spent by the model's own player:
 - Placed only by specific effects, never by ordinary injury rolls.
 - At the start of a model's activation, if it has at least one infection marker, it
   gains one more (up to the cap).
+- Infection markers count together with blood markers towards a Bloodbath.
 
 ## Sin markers
 
@@ -52,7 +53,4 @@ The reverse of blood markers. Spent by the model's own player:
 
 ## Open questions
 
-1. Infection growth: "start of the turn" is read as the start of the model's own
-   activation, not the start of the game turn. (Assumed.)
-2. Do infection markers count towards the 6 (or 3) needed for a Bloodbath? (Assumed yes.)
-3. What can a model do if it is prevented from standing up?
+1. What can a model do if it is prevented from standing up?

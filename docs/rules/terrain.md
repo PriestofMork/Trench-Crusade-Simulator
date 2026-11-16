@@ -61,7 +61,22 @@ top it is climbing to.
   - **Climb down a ladder** (a face tagged Ladder): no roll; pays the height, the
     same as going up.
   - **Climb down a sheer surface:** a risky climb roll, paying the height, as for
-    climbing up. (Assumed, from the general climbing rule.)
+    climbing up.
+- **Choosing in the digital game:** the player picks a descent mode for the selected
+  model, "Drop" or "Climb down", and can switch at any time before committing a
+  move. The movement area is redrawn for the chosen mode, so the player sees how far
+  the model can get each way. In "Climb down" mode drops of 3" or more are never
+  used; in "Drop" mode sheer climbs down are never used. Ladders and drops of less
+  than 3" are available in both modes.
+
+## Gaps and jumps
+
+- A gap is any stretch between two ledges where the floor is lower than the lower
+  ledge, however shallow.
+- The whole width of the base must clear terrain along the jump, not only its centre.
+- A model that fails a jump falls from the middle of the gap, at take-off height,
+  onto the highest floor beneath.
+- The injury roll for a fall is rolled by the falling model's opponent.
 
 ## Where a model can be
 

@@ -50,7 +50,7 @@ Dice modifiers:
 | Weapon keywords, abilities, skills | as stated |
 | Target's Armour | see `models.md` |
 
-- Result (assumed bands, unconfirmed):
+- Result:
 
 | Total | Result |
 |---|---|
@@ -68,8 +68,7 @@ Dice modifiers:
 
 ## Open questions
 
-1. Injury result bands: are 2–6 / 7–8 / 9+ correct?
-2. Melee: one attack per melee weapon? Off-hand penalty?
+1. Melee: one attack per melee weapon? Off-hand penalty?
 3. Cover for ranged attacks is deferred (see `line-of-sight.md`).
 4. Shooting into melee with several friendly or several enemy models in it: how is
    the one hit chosen?
