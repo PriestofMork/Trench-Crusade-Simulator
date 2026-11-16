@@ -37,10 +37,13 @@ func _ok(command: Command) -> Array[GameEvent]:
 
 ## Grants `id` a move, rigs the dice for `rolls` (see _rig()) and sends the
 ## path; returns its events.
-func _move(id: int, points: Array[Vector3], rolls: Array, kinds: Array = []) -> Array[GameEvent]:
+func _move(
+	id: int, points: Array[Vector3], rolls: Array,
+	mode: Transitions.DescentMode = Transitions.DescentMode.DROP
+) -> Array[GameEvent]:
 	TurnHelper.grant_move(state, id)
 	_rig(rolls)
-	return _ok(MoveCommand.new(state.get_model(id).player, id, points, kinds))
+	return _ok(MoveCommand.new(state.get_model(id).player, id, points, mode))
 
 
 func _kinds_of(events: Array[GameEvent]) -> Array[E]:
@@ -125,13 +128,13 @@ func test_climbing_down_a_sheer_surface() -> void:
 	_piece(Vector2(12, 12), Vector3(4, 4, 4))
 	var id: int = _place(Vector3(12, 4, 13), 8.0)
 	var down: Array[Vector3] = [Vector3(12, 4, 14), Vector3(12, 0, 14 + R32), Vector3(12, 0, 16)]
-	_move(id, down, [SUCCESS], [K.NONE, K.SHEER_CLIMB_DOWN, K.NONE])
+	_move(id, down, [SUCCESS], Transitions.DescentMode.CLIMB_DOWN)
 	assert_eq(state.get_model(id).position, Vector3(12, 0, 16))
 	assert_almost_eq(state.pending.budget, 1.0, 0.0001, "1 + 4 + 2 of 8")
 	before_each()
 	_piece(Vector2(12, 12), Vector3(4, 4, 4))
 	id = _place(Vector3(12, 4, 13), 8.0)
-	_move(id, down, [FAILURE], [K.NONE, K.SHEER_CLIMB_DOWN, K.NONE])
+	_move(id, down, [FAILURE], Transitions.DescentMode.CLIMB_DOWN)
 	assert_eq(state.get_model(id).position, Vector3(12, 4, 14), "it stays at the top")
 	assert_eq(state.turn.active_model_id, -1)
 

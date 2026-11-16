@@ -25,9 +25,8 @@ const EPSILON: float = 0.0001
 var model_id: int
 var waypoints: Array[Vector3]
 var budget: float
-## Per waypoint, the kind its segment must be taken as (NONE or missing: the
-## best), for example SHEER_CLIMB_DOWN instead of a drop.
-var preferred_kinds: Array = []
+## How drops of 3" or more are taken (Transitions.DescentMode).
+var descent_mode: Transitions.DescentMode = Transitions.DescentMode.DROP
 ## "" if legal, else why not.
 var error: String = ""
 ## Why it is not legal, as a category the UI can react to.
@@ -45,12 +44,12 @@ var segments: Array[MoveSegment] = []
 ## `p_budget` negative means the model's full Movement characteristic.
 func _init(
 	state: GameState, p_model_id: int, p_waypoints: Array[Vector3], p_budget: float = -1.0,
-	p_preferred_kinds: Array = []
+	p_descent_mode: Transitions.DescentMode = Transitions.DescentMode.DROP
 ) -> void:
 	model_id = p_model_id
 	waypoints = p_waypoints
 	budget = p_budget
-	preferred_kinds = p_preferred_kinds
+	descent_mode = p_descent_mode
 	error = _check(state)
 
 
@@ -91,9 +90,10 @@ func _check(state: GameState) -> String:
 		return _too_far(flat, budget)
 
 	var legality: MoveLegality = MoveLegality.new(state, model)
+	legality.descent_mode = descent_mode
 	if legality.start_surfaces.is_empty():
 		return "The model is not standing on a floor."
-	var found: Array[MoveSegment] = legality.segments_for(model.position, waypoints, preferred_kinds)
+	var found: Array[MoveSegment] = legality.segments_for(model.position, waypoints)
 	if found.is_empty():
 		return _reject(legality.last_result)
 	var total: float = 0.0

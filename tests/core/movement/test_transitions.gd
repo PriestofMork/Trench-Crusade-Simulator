@@ -42,7 +42,11 @@ func test_drops_below_three_inches_are_free_hops() -> void:
 	assert_eq(_down(3.0), K.NONE, "3\" counts as falling: part 2")
 	assert_eq(_down(3.0, SHEER), K.NONE)
 	assert_eq(_down(2.0, SHEER), K.HOP_DOWN)
-	assert_eq(Transitions.wall_options(false, 3.0, NONE_TAG, false), [K.DROP, K.SHEER_CLIMB_DOWN] as Array[Transitions.Kind])
+	assert_eq(Transitions.wall_options(false, 3.0, NONE_TAG, false), [K.DROP] as Array[Transitions.Kind], "Drop mode")
+	var climb_down: Transitions.DescentMode = Transitions.DescentMode.CLIMB_DOWN
+	assert_eq(Transitions.wall_options(false, 3.0, NONE_TAG, false, climb_down), [K.SHEER_CLIMB_DOWN] as Array[Transitions.Kind])
+	assert_eq(Transitions.wall_options(false, 4.0, LADDER, false, climb_down), [K.SHEER_CLIMB_DOWN, K.LADDER_DOWN] as Array[Transitions.Kind])
+	assert_eq(Transitions.wall_options(false, 2.0, NONE_TAG, false, climb_down), [K.HOP_DOWN] as Array[Transitions.Kind], "small drops in both")
 	assert_true(Transitions.needs_roll(K.DROP))
 
 

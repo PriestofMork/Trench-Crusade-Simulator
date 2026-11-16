@@ -24,9 +24,11 @@ func _place(pos: Vector3, movement: float = 6.0, player: int = 0) -> int:
 	return command.placed_model_id
 
 
-func _path(id: int, points: Array[Vector3], kinds: Array = []) -> MovePath:
+func _path(
+	id: int, points: Array[Vector3], mode: Transitions.DescentMode = Transitions.DescentMode.DROP
+) -> MovePath:
 	TurnHelper.grant_move(state, id)
-	return MovePath.new(state, id, points, state.pending.budget, kinds)
+	return MovePath.new(state, id, points, state.pending.budget, mode)
 
 
 func _kinds(path: MovePath) -> Array[StringName]:
@@ -77,7 +79,7 @@ func test_a_wall_tagged_sheer_needs_the_roll_at_any_height() -> void:
 	assert_eq(_kinds(path), [&"climb"] as Array[StringName])
 
 
-func test_climbing_down_a_sheer_surface_when_asked_instead_of_dropping() -> void:
+func test_climbing_down_a_sheer_surface_in_climb_down_mode() -> void:
 	_piece(Vector2(12, 12), Vector3(4, 4, 4))
 	var id: int = _place(Vector3(12, 4, 13), 8.0)
 	var down: Array[Vector3] = [Vector3(12, 4, 14), Vector3(12, 0, 14 + R32), Vector3(12, 0, 16)]
@@ -85,9 +87,12 @@ func test_climbing_down_a_sheer_surface_when_asked_instead_of_dropping() -> void
 	assert_eq(_kinds(drop), [&"injury"] as Array[StringName], "by default the free drop")
 	assert_eq(drop.segments[1].kind, K.DROP)
 	assert_almost_eq(drop.cost, 1.0 + 2.0, 0.0001, "a drop costs nothing extra")
-	var climb: MovePath = _path(id, down, [K.NONE, K.SHEER_CLIMB_DOWN, K.NONE])
+	var climb: MovePath = _path(id, down, Transitions.DescentMode.CLIMB_DOWN)
 	assert_true(climb.is_legal(), climb.error)
 	assert_eq(_kinds(climb), [&"climb"] as Array[StringName])
+	assert_eq(climb.segments[1].kind, K.SHEER_CLIMB_DOWN)
+	assert_string_contains(String(climb.rolls()[0]["label"]), "Climb down 4.0 (risky)")
+	assert_string_contains(String(drop.rolls()[0]["label"]), "Drop 4.0 (injury +1)")
 	assert_eq(climb.rolls()[0]["at"], Vector3(12, 4, 14), "rolled at the top")
 	assert_almost_eq(climb.cost, 1.0 + 4.0 + 2.0, 0.0001, "climbing down pays the height")
 
@@ -181,6 +186,25 @@ func test_terrain_rising_into_the_jump_blocks_it() -> void:
 	_piece(Vector2(13.25, 10), Vector3(0.5, 6, 4), TerrainPiece.Tag.IMPASSABLE)
 	var id: int = _place(Vector3(11, 4, 10))
 	assert_false(_path(id, _jump(2.5)).is_legal())
+
+
+func test_the_whole_width_of_the_base_must_clear_terrain() -> void:
+	# A pillar beside the line of the jump: the centre clears it, the base does not.
+	_piece(Vector2(10, 10), Vector3(4, 4, 4))
+	_piece(Vector2(16.5, 10), Vector3(4, 4, 4))
+	_piece(Vector2(13.25, 10.8), Vector3(0.5, 6, 0.5), TerrainPiece.Tag.IMPASSABLE)
+	var id: int = _place(Vector3(11, 4, 10))
+	var path: MovePath = _path(id, _jump(2.5))
+	assert_false(path.is_legal(), "the base clips the pillar")
+	assert_eq(path.rejection, MovePath.Rejection.BLOCKED)
+	var clear: Array[Vector3] = [Vector3(12, 4, 9.85), Vector3(14.5, 4, 9.85), Vector3(15.5, 4, 9.85)]
+	assert_true(_path(id, clear).is_legal(), "a little further from it is fine")
+	# The reach field agrees: the far platform is still reached, beside the pillar.
+	var field: ReachField = ReachField.new(state, id, state.pending.budget)
+	var far: Vector3 = Vector3(15.5, 4, 9.5)
+	assert_true(field.is_reachable(far))
+	var command: MoveCommand = MoveCommand.new(0, id, field.path_to(far))
+	assert_eq(command.validate(state), "")
 
 
 func test_falling_lands_on_the_first_surface_beneath() -> void:

@@ -63,6 +63,8 @@ var start_piece_ids: PackedInt32Array = PackedInt32Array()
 
 ## Whether crossings that need a roll may be used.
 var allow_rolls: bool = true
+## How drops of 3" or more are taken (Transitions.DescentMode).
+var descent_mode: Transitions.DescentMode = Transitions.DescentMode.DROP
 ## The widest gap (plus any rise) the model may jump, inches.
 var jump_limit: float = 0.0
 
@@ -220,7 +222,7 @@ func wall_cost(u: Vector2, su: int, v: Vector2, sv: int, preferred: Transitions.
 			if y > low_y + HeightField.TOLERANCE and y < high_y - HeightField.TOLERANCE:
 				return INF
 	var options: Array[Transitions.Kind] = Transitions.wall_options(
-		going_up, wall_height, piece.tag, going_up and field.is_low_obstacle(high_surface)
+		going_up, wall_height, piece.tag, going_up and field.is_low_obstacle(high_surface), descent_mode
 	)
 	# A climb needs the wall to reach down to the low floor; dropping or
 	# hopping off anything is fine.
@@ -274,6 +276,9 @@ func jump_cost(u: Vector2, su: int, v: Vector2, sv: int) -> float:
 	if not _gap_is_open(u, v, su, sv, low_ledge, high_ledge):
 		return INF
 	var rise: float = maxf(yv - yu, 0.0)
+	# Climbing down, nothing comes down 3" or more without climbing.
+	if descent_mode == Transitions.DescentMode.CLIMB_DOWN and Transitions.is_fall(yu - yv):
+		return INF
 	if width + rise > jump_limit + EPSILON:
 		last_result = Result.TOO_WIDE
 		return INF
@@ -300,8 +305,9 @@ func jump_cost(u: Vector2, su: int, v: Vector2, sv: int) -> float:
 
 
 ## Whether the straight way from u (on su) to v (on sv) runs over neither
-## ledge in between, every floor under it there is lower than the lower ledge,
-## and no terrain rises into the jump. Only the centre line is checked.
+## ledge in between, every floor under its centre line there is lower than the
+## lower ledge, and no terrain rises into the jump across the whole width of
+## the base.
 func _gap_is_open(u: Vector2, v: Vector2, su: int, sv: int, low_ledge: float, high_ledge: float) -> bool:
 	var length: float = u.distance_to(v)
 	var slack: float = (TOUCH_SLACK + HeightField.EDGE_SLACK) / length
@@ -316,14 +322,24 @@ func _gap_is_open(u: Vector2, v: Vector2, su: int, sv: int, low_ledge: float, hi
 		var top: float = maxf(s.height_at(u.lerp(v, t0)), s.height_at(u.lerp(v, t1)))
 		if top > low_ledge - HeightField.TOLERANCE:
 			return false
+	# The whole base must clear terrain along the way (terrain.md, "Gaps and
+	# jumps"): no solid within a base radius of the line rises above the lower
+	# ledge, other than the pieces the two ledges are the tops of.
+	var ledge_pieces: Dictionary[int, bool] = {}
+	for ledge: int in [su, sv]:
+		for member: int in field.level_members(ledge):
+			ledge_pieces[field.surface_piece_id(member)] = true
 	for solid: HeightField.Solid in field.solids:
-		var span: Vector2 = PlanarGeometry.segment_polygon_clip(u, v, solid.polygon)
-		var t0: float = maxf(span.x, slack)
-		var t1: float = minf(span.y, 1.0 - slack)
-		if t0 >= t1:
+		if ledge_pieces.has(solid.piece.id):
 			continue
-		var top: float = maxf(solid.top_at(u.lerp(v, t0)), solid.top_at(u.lerp(v, t1)))
-		if top > low_ledge - HeightField.TOLERANCE and solid.bottom < high_ledge + model_height:
+		if solid.bottom >= high_ledge + model_height:
+			continue
+		if solid.shape.segment_distance(u, v) >= radius - EPSILON:
+			continue
+		var top: float = -INF
+		for corner: Vector2 in solid.polygon:
+			top = maxf(top, solid.top_at(corner))
+		if top > low_ledge - HeightField.TOLERANCE:
 			last_result = Result.TERRAIN
 			return false
 	return true
@@ -395,15 +411,12 @@ static func _more_telling(candidate: Result, current: Result) -> bool:
 
 ## The segments of the path from `from` through `points`, as taken (see
 ## segment_cost()), or an empty list if a segment is not legal (last_result
-## says why). `preferred` gives a kind per segment (NONE: whichever is best).
-func segments_for(from: Vector3, points: Array[Vector3], preferred: Array = []) -> Array[MoveSegment]:
+## says why).
+func segments_for(from: Vector3, points: Array[Vector3]) -> Array[MoveSegment]:
 	var result: Array[MoveSegment] = []
 	var previous: Vector3 = from
 	for i: int in points.size():
-		var wanted: Transitions.Kind = Transitions.Kind.NONE
-		if i < preferred.size():
-			wanted = preferred[i]
-		var cost: float = segment_cost(previous, points[i], wanted)
+		var cost: float = segment_cost(previous, points[i])
 		if cost == INF:
 			return []
 		var segment: MoveSegment = MoveSegment.new()

@@ -39,7 +39,7 @@
 		{"name": "under the deck", "player": 0, "at": [34, 0, 33.5], "base": 32, "movement": 6},
 		{"name": "gap jumper", "player": 0, "at": [5.5, 4, 5], "base": 32, "movement": 6},
 		{"name": "ledge jumper", "player": 1, "at": [19.5, 4, 5], "base": 32, "movement": 6},
-		{"name": "dropper", "player": 1, "at": [32, 5, 5], "base": 32, "movement": 6},
+		{"name": "dropper", "player": 1, "at": [32, 5, 5], "base": 32, "movement": 8},
 		{"name": "wide gap jumper", "player": 0, "at": [39.5, 4, 5], "base": 32, "movement": 6},
 		{"name": "block climber", "player": 1, "at": [6, 0, 30.5], "base": 32, "movement": 8}
 	]

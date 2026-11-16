@@ -103,6 +103,7 @@ var size_x: int = 0
 var size_z: int = 0
 var field: HeightField
 var legality: MoveLegality
+var descent_mode: Transitions.DescentMode = Transitions.DescentMode.DROP
 ## How long building took, for reports: "setup_ms", "search_ms" and
 ## "tier_<n>_ms" (wall-clock; diagnostics only, never used for rules).
 var timings: Dictionary = {}
@@ -185,7 +186,14 @@ var _heap_state: PackedInt32Array = PackedInt32Array()
 
 ## `p_budget` is how far the model may move (the action's budget); negative
 ## means its full Movement characteristic.
-func _init(state: GameState, p_model_id: int, p_budget: float = -1.0, p_cell_size: float = CELL_SIZE) -> void:
+## `p_descent_mode` decides how drops of 3" or more are taken (see
+## Transitions.DescentMode); a move along a path from this field must be sent
+## with the same mode.
+func _init(
+	state: GameState, p_model_id: int, p_budget: float = -1.0, p_cell_size: float = CELL_SIZE,
+	p_descent_mode: Transitions.DescentMode = Transitions.DescentMode.DROP
+) -> void:
+	descent_mode = p_descent_mode
 	model_id = p_model_id
 	cell_size = p_cell_size
 	var model: ModelState = state.get_model(model_id)
@@ -196,6 +204,7 @@ func _init(state: GameState, p_model_id: int, p_budget: float = -1.0, p_cell_siz
 	budget = p_budget if p_budget >= 0.0 else model.movement
 	_start_2d = Vector2(start.x, start.z)
 	legality = MoveLegality.new(state, model)
+	legality.descent_mode = descent_mode
 	field = legality.field
 	_radius = legality.radius
 	_limit = budget + MARGIN_CELLS * cell_size

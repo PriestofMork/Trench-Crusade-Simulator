@@ -46,6 +46,12 @@ enum Kind {
 	GAP_JUMP,
 }
 
+## How a move gets down a drop of the free drop height or more (terrain.md,
+## "Going down": the player's descent mode). DROP never climbs down a sheer
+## surface; CLIMB_DOWN never drops (nor jumps down onto a far side that much
+## lower). Ladders and smaller drops are the same in both.
+enum DescentMode { DROP, CLIMB_DOWN }
+
 ## Per kind: whether it needs a roll, and whether the vertical distance is paid.
 const RULES: Dictionary[Kind, Dictionary] = {
 	Kind.WALK: {"roll": false, "pays_height": false},
@@ -127,7 +133,8 @@ static func pick_wall_kind(
 ## side is the wall (the higher piece), `low_obstacle` whether going up lands on
 ## a low obstacle.
 static func wall_options(
-	going_up: bool, wall_height: float, tag: TerrainPiece.Tag, low_obstacle: bool
+	going_up: bool, wall_height: float, tag: TerrainPiece.Tag, low_obstacle: bool,
+	mode: DescentMode = DescentMode.DROP
 ) -> Array[Kind]:
 	if tag == TerrainPiece.Tag.IMPASSABLE:
 		return []
@@ -143,9 +150,10 @@ static func wall_options(
 		return [Kind.SHEER_CLIMB_UP]
 	if wall_height < TerrainRules.FREE_DROP_HEIGHT - HEIGHT_SLACK:
 		return [Kind.HOP_DOWN]
+	var down: Kind = Kind.DROP if mode == DescentMode.DROP else Kind.SHEER_CLIMB_DOWN
 	if tag == TerrainPiece.Tag.LADDER:
-		return [Kind.DROP, Kind.LADDER_DOWN]
-	return [Kind.DROP, Kind.SHEER_CLIMB_DOWN]
+		return [down, Kind.LADDER_DOWN]
+	return [down]
 
 
 ## The cheapest roll-free way across a wall, or NONE.
@@ -157,16 +165,19 @@ static func roll_free_wall_kind(
 
 ## The way across a wall a move takes when rolls are allowed (see pick_wall_kind()).
 static func wall_kind(
-	going_up: bool, wall_height: float, tag: TerrainPiece.Tag, low_obstacle: bool, preferred: Kind = Kind.NONE
+	going_up: bool, wall_height: float, tag: TerrainPiece.Tag, low_obstacle: bool, preferred: Kind = Kind.NONE,
+	mode: DescentMode = DescentMode.DROP
 ) -> Kind:
-	return pick_wall_kind(wall_options(going_up, wall_height, tag, low_obstacle), going_up, wall_height, true, preferred)
+	return pick_wall_kind(wall_options(going_up, wall_height, tag, low_obstacle, mode), going_up, wall_height, true, preferred)
 
 
 ## A short name for showing a crossing that needs a roll.
 static func roll_name(kind: Kind) -> String:
 	match kind:
-		Kind.SHEER_CLIMB_UP, Kind.SHEER_CLIMB_DOWN:
+		Kind.SHEER_CLIMB_UP:
 			return "Climb"
+		Kind.SHEER_CLIMB_DOWN:
+			return "Climb down"
 		Kind.GAP_JUMP:
 			return "Jump"
 		Kind.DROP:

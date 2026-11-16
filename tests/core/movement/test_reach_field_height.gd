@@ -398,3 +398,65 @@ func test_roll_lists_match_the_move_command_with_risky_routes() -> void:
 			checked += 1
 	gut.p("checked %d routes, %d with rolls" % [checked, risky])
 	assert_gt(risky, 100, "risky routes are part of the check")
+
+
+func test_descent_modes_from_the_five_inch_platform() -> void:
+	# Model 12 (Movement 8) on the 5" platform x 30..34, z 3..7.
+	_test_table()
+	var drop: ReachField = ReachField.new(state, 12, -1.0, ReachField.CELL_SIZE, Transitions.DescentMode.DROP)
+	var climb: ReachField = ReachField.new(state, 12, -1.0, ReachField.CELL_SIZE, Transitions.DescentMode.CLIMB_DOWN)
+	var below: Vector3 = Vector3(34.9, 0, 5)
+	assert_eq(drop.rolls_to(below)[0]["label"], "Drop 5.0 (injury +1)")
+	assert_eq(climb.rolls_to(below)[0]["label"], "Climb down 5.0 (risky)")
+	# Dropping costs nothing for the height: it gets much further.
+	var far: Vector3 = Vector3(36.5, 0, 5)
+	assert_true(drop.is_reachable(far))
+	assert_false(climb.is_reachable(far), "2 + 5 + 2.5 is more than 8")
+	# The mode goes with the move: each path validates in its own mode only.
+	TurnHelper.grant_move(state, 12)
+	var as_climb: MoveCommand = MoveCommand.new(1, 12, climb.path_to(below), Transitions.DescentMode.CLIMB_DOWN)
+	assert_eq(as_climb.validate(state), "")
+	assert_eq(as_climb.path().segments[as_climb.path().segments.size() - 2].kind, Transitions.Kind.SHEER_CLIMB_DOWN)
+	var drop_in_climb_mode: MoveCommand = MoveCommand.new(1, 12, drop.path_to(far), Transitions.DescentMode.CLIMB_DOWN)
+	assert_ne(drop_in_climb_mode.validate(state), "", "no drops of 3\" or more in Climb down mode")
+
+
+func test_ladders_and_small_drops_are_the_same_in_both_modes() -> void:
+	_test_table()
+	# Model 6 on the ground by the tower's ladder; model 3 on the 2" platform.
+	for id: int in [3, 6]:
+		var drop: ReachField = ReachField.new(state, id, -1.0, ReachField.CELL_SIZE, Transitions.DescentMode.DROP)
+		var climb: ReachField = ReachField.new(state, id, -1.0, ReachField.CELL_SIZE, Transitions.DescentMode.CLIMB_DOWN)
+		var same: int = 0
+		for k: int in range(0, drop.state_count(), 7):
+			assert_eq(drop.is_state_safe(k), climb.is_state_safe(k), "model %d at %s" % [id, str(drop.state_position(k))])
+			same += 1
+		assert_gt(same, 100)
+
+
+func test_consistency_in_climb_down_mode() -> void:
+	_test_table()
+	var checked: int = 0
+	var climbs_down: int = 0
+	for id: int in [6, 8, 10, 11, 12, 13]:
+		var field: ReachField = ReachField.new(state, id, -1.0, ReachField.CELL_SIZE, Transitions.DescentMode.CLIMB_DOWN)
+		var stride: int = maxi(field.state_count() / 200, 1)
+		for k: int in range(0, field.state_count(), stride):
+			if not field.is_state_reachable(k):
+				continue
+			var target: Vector3 = field.state_position(k)
+			var path: Array[Vector3] = field.path_to(target)
+			TurnHelper.grant_move(state, id)
+			var command: MoveCommand = MoveCommand.new(state.get_model(id).player, id, path, Transitions.DescentMode.CLIMB_DOWN)
+			assert_eq(command.validate(state), "", "model %d to %s via %s" % [id, str(target), str(path)])
+			if command.path() == null:
+				continue
+			assert_almost_eq(command.cost, field.cost_to(target), 0.0001)
+			assert_eq(command.path().rolls().size(), field.rolls_to(target).size())
+			for segment: MoveSegment in command.path().segments:
+				assert_ne(segment.kind, Transitions.Kind.DROP, "no drops in Climb down mode")
+				if segment.kind == Transitions.Kind.SHEER_CLIMB_DOWN:
+					climbs_down += 1
+			checked += 1
+	gut.p("checked %d routes in Climb down mode, %d sheer climbs down" % [checked, climbs_down])
+	assert_gt(climbs_down, 0)

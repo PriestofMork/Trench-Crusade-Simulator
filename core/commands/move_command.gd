@@ -13,8 +13,10 @@ extends Command
 var player: int
 var model_id: int
 var waypoints: Array[Vector3]
-## Per waypoint, a kind its segment must be taken as, or NONE (see MovePath).
-var segment_kinds: Array = []
+## How drops of 3" or more are taken: the descent mode the move was chosen in,
+## so validation, the staged execution, undo and replay all agree with what
+## the reach field showed.
+var descent_mode: Transitions.DescentMode = Transitions.DescentMode.DROP
 ## Why the last validate() failed, as a category the UI can react to.
 var rejection: MovePath.Rejection = MovePath.Rejection.NONE
 ## What the move costs, set by validate().
@@ -23,11 +25,14 @@ var cost: float = INF
 var _path: MovePath = null
 
 
-func _init(p_player: int, p_model_id: int, p_waypoints: Array[Vector3], p_segment_kinds: Array = []) -> void:
+func _init(
+	p_player: int, p_model_id: int, p_waypoints: Array[Vector3],
+	p_descent_mode: Transitions.DescentMode = Transitions.DescentMode.DROP
+) -> void:
 	player = p_player
 	model_id = p_model_id
 	waypoints = p_waypoints
-	segment_kinds = p_segment_kinds
+	descent_mode = p_descent_mode
 
 
 ## The path as the last validate() checked it, or null.
@@ -44,7 +49,7 @@ func validate(state: GameState) -> String:
 		return error
 	if state.pending.model_id != model_id:
 		return "The move waiting is model %d's, not model %d's." % [state.pending.model_id, model_id]
-	var path: MovePath = MovePath.new(state, model_id, waypoints, state.pending.budget, segment_kinds)
+	var path: MovePath = MovePath.new(state, model_id, waypoints, state.pending.budget, descent_mode)
 	rejection = path.rejection
 	if not path.is_legal():
 		return path.error
