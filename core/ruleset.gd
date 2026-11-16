@@ -37,6 +37,9 @@ var activation_rules: Array[ActivationRule] = []
 ## Whether one model can see another (brief 007: a temporary always-yes
 ## implementation until brief 008).
 var sight: Sight = TemporarySight.new()
+## Resolves free melee attacks (Retreat; brief 007: a temporary event-only
+## implementation until brief 009).
+var free_attack: FreeAttackHook = TemporaryFreeAttack.new()
 
 
 func action(id: StringName) -> ActionDef:
@@ -90,6 +93,8 @@ static func behaviour(behaviour_name: String) -> ActionBehaviour:
 			return RollThenMoveBehaviour.new()
 		"charge":
 			return ChargeBehaviour.new()
+		"retreat":
+			return RetreatBehaviour.new()
 	push_error("Ruleset: unknown action behaviour '%s'" % behaviour_name)
 	return ActionBehaviour.new()
 

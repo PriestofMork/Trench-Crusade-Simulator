@@ -22,6 +22,10 @@ enum Kind {
 	## where around the target's base it ends, from `positions`
 	## (ChooseContactCommand); `default_index` is first contact.
 	CHARGE_CONTACT,
+	## A retreating model is in melee with several enemies: `player` (their
+	## owner) picks the order of the free attacks, a permutation of
+	## `model_ids` (ChooseAttackOrderCommand).
+	FREE_ATTACK_ORDER,
 }
 
 ## Means either player may answer.
@@ -38,6 +42,8 @@ var choice: RollChoice = null
 var budget: float = 0.0
 ## MOVE: the action granting the move.
 var action_id: StringName = &""
+## MOVE: how the move treats enemy 1" zones (a retreat), or null for the normal rule.
+var zones: EnemyZones = null
 ## CHARGE_CONTACT: where the charger may end (base centres, on their floors),
 ## and the one it ends on if nothing else is chosen.
 var positions: Array[Vector3] = []
@@ -45,6 +51,8 @@ var default_index: int = 0
 ## CHARGE_CONTACT: per position, the ids of the enemies (Array[int]) it would
 ## count as charging.
 var charged_ids: Array = []
+## FREE_ATTACK_ORDER: the attackers, in id order.
+var model_ids: Array[int] = []
 
 
 func _init(p_kind: Kind, p_player: int, p_prompt: String = "") -> void:

@@ -43,6 +43,7 @@ static func start(state: GameState, path: MovePath, decision: PendingDecision, e
 	staged.budget = decision.budget
 	staged.segments = path.segments
 	staged.surcharge = path.surcharge
+	staged.zones = decision.zones
 	state.pending = null
 	state.resolution = staged
 	_advance(state, events)
@@ -160,7 +161,7 @@ static func _finish(state: GameState, staged: StagedMove, events: Array[GameEven
 		if state.turn.active_model_id == staged.model_id:
 			TurnFlow.end_activation(state, events, staged.end_reason)
 		return
-	TurnFlow.continue_move(state, state.get_model(staged.model_id), staged.action_id, staged.left(), events)
+	TurnFlow.continue_move(state, state.get_model(staged.model_id), staged.action_id, staged.left(), events, staged.zones)
 
 
 ## Moves the model along `leg` (its position first) and reports it, if it goes anywhere.

@@ -144,16 +144,21 @@ static func movement_budget(state: GameState, model: ModelState, inches: float =
 
 
 ## Opens a move for `model`: up to its movement budget, in one or more steps.
-static func offer_move(state: GameState, model: ModelState, action_id: StringName, events: Array[GameEvent]) -> void:
-	_open_move(state, model, action_id, movement_budget(state, model), events)
+## `zones` changes how enemy 1" zones are treated (a retreat), null for the
+## normal rule.
+static func offer_move(
+	state: GameState, model: ModelState, action_id: StringName, events: Array[GameEvent], zones: EnemyZones = null
+) -> void:
+	_open_move(state, model, action_id, movement_budget(state, model), events, zones)
 
 
 ## After a step of an open move: keeps it open with what is left, if anything.
 static func continue_move(
-	state: GameState, model: ModelState, action_id: StringName, left: float, events: Array[GameEvent]
+	state: GameState, model: ModelState, action_id: StringName, left: float, events: Array[GameEvent],
+	zones: EnemyZones = null
 ) -> void:
 	if left > MOVE_EPSILON:
-		_open_move(state, model, action_id, left, events)
+		_open_move(state, model, action_id, left, events, zones)
 
 
 ## Finishes an open move, if there is one; what is left of it is lost.
@@ -168,7 +173,8 @@ static func finish_open_move(state: GameState, events: Array[GameEvent], reason:
 
 
 static func _open_move(
-	state: GameState, model: ModelState, action_id: StringName, budget: float, events: Array[GameEvent]
+	state: GameState, model: ModelState, action_id: StringName, budget: float, events: Array[GameEvent],
+	zones: EnemyZones = null
 ) -> void:
 	var decision: PendingDecision = PendingDecision.new(
 		PendingDecision.Kind.MOVE, model.player, "Move up to %.1f\" more, or finish the move." % budget
@@ -176,6 +182,7 @@ static func _open_move(
 	decision.model_id = model.id
 	decision.budget = budget
 	decision.action_id = action_id
+	decision.zones = zones
 	ask(state, decision, events)
 
 

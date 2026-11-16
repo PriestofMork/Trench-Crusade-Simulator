@@ -386,6 +386,7 @@ func test_dash_after_a_successful_charge_is_refused() -> void:
 	_charge(a, near, 1, 1)
 	_ok(ChooseContactCommand.new(0, state.pending.default_index))
 	assert_string_contains(state.execute(BeginActionCommand.new(0, a, &"dash")), "In melee")
+	assert_eq(state.execute(BeginActionCommand.new(0, a, &"retreat")), "Only one move action per activation.")
 
 
 # --- Undo, redo and replay ----------------------------------------------------

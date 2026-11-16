@@ -86,10 +86,12 @@ func test_action_availability_in_melee() -> void:
 	var model: ModelState = state.get_model(a)
 	for action: StringName in [&"move", &"dash", &"charge"]:
 		assert_string_contains(BeginActionCommand.unavailable_reason(state, model, action), "In melee", String(action))
+	assert_eq(BeginActionCommand.unavailable_reason(state, model, &"retreat"), "", "only Retreat can move it")
 	assert_ne(state.execute(BeginActionCommand.new(0, a, &"move")), "", "Move is refused")
 	assert_ne(state.execute(BeginActionCommand.new(0, a, &"dash")), "", "Dash is refused")
 	var other: ModelState = state.get_model(free)
 	assert_eq(BeginActionCommand.unavailable_reason(state, other, &"move"), "")
+	assert_string_contains(BeginActionCommand.unavailable_reason(state, other, &"retreat"), "only for a model in melee")
 
 
 func test_move_still_may_not_enter_a_zone() -> void:

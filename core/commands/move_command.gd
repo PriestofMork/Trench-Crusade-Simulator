@@ -49,7 +49,7 @@ func validate(state: GameState) -> String:
 		return error
 	if state.pending.model_id != model_id:
 		return "The move waiting is model %d's, not model %d's." % [state.pending.model_id, model_id]
-	var path: MovePath = MovePath.new(state, model_id, waypoints, state.pending.budget, descent_mode)
+	var path: MovePath = MovePath.new(state, model_id, waypoints, state.pending.budget, descent_mode, state.pending.zones)
 	rejection = path.rejection
 	if not path.is_legal():
 		return path.error
@@ -82,5 +82,5 @@ func apply(state: GameState) -> Array[GameEvent]:
 	events.append(GameEvent.new(GameEvent.Kind.MODEL_MOVED, player, model_id, {
 		"path": shown, "kinds": kinds, "cost": cost, "left": left
 	}))
-	TurnFlow.continue_move(state, model, decision.action_id, left, events)
+	TurnFlow.continue_move(state, model, decision.action_id, left, events, decision.zones)
 	return events

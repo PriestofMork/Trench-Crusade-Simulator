@@ -30,6 +30,8 @@ var next: int = 0
 var spent: float = 0.0
 ## What the move waits for (one of the constants above).
 var waiting: StringName = NOT_WAITING
+## How the move treats enemy 1" zones (a retreat), null for the normal rule.
+var zones: EnemyZones = null
 
 
 func copy() -> Resolution:
@@ -43,6 +45,7 @@ func copy() -> Resolution:
 	result.next = next
 	result.spent = spent
 	result.waiting = waiting
+	result.zones = zones
 	return result
 
 

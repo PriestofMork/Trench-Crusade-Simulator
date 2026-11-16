@@ -38,11 +38,13 @@ func test_actions_are_registered_as_data() -> void:
 	assert_false(dash.move_action)
 	assert_true(dash.risky)
 	var charge: ActionDef = state.rules.action(&"charge")
+	var retreat: ActionDef = state.rules.action(&"retreat")
 	assert_true(charge.move_action, "Charge is a move action (brief 007)")
+	assert_true(retreat.move_action, "Retreat is a move action (brief 007)")
 	assert_eq(move.melee, ActionDef.Melee.FORBIDDEN)
 	assert_eq(dash.melee, ActionDef.Melee.FORBIDDEN)
 	assert_eq(charge.melee, ActionDef.Melee.FORBIDDEN)
-	assert_null(state.rules.action(&"retreat"), "not yet")
+	assert_eq(retreat.melee, ActionDef.Melee.REQUIRED)
 
 
 func test_selecting_is_not_activating_the_first_action_is() -> void:

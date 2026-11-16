@@ -41,6 +41,11 @@ enum Kind {
 	CHARGE_FAILED,
 	## The charger is in base contact ("target_id", "charged": Array[int], "at").
 	CHARGED,
+	## A free melee attack against a retreating model ("target_id"; "temporary"
+	## while attacks do not exist).
+	FREE_ATTACK,
+	## A Retreat started ("enemies": the ids it is in melee with).
+	RETREAT_STARTED,
 }
 
 var kind: Kind
