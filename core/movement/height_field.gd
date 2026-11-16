@@ -399,6 +399,31 @@ func surfaces_matching(p: Vector2, y: float, tolerance: float = TOLERANCE) -> Pa
 	return result
 
 
+## How far a model's base may be from a floor's plane and still count as
+## standing on it, for the floor normal.
+const STANDING_TOLERANCE: float = 0.02
+
+
+## The up direction of the floor a model's base underside at `base` stands
+## on: the normal of that floor's plane (straight up on level ground and in
+## the air). Where two floors meet at `base` (the foot of a ramp), the one
+## the base centre is deeper inside wins. The one source of a model's tilt,
+## for the sight cylinder and for drawing it (ruling 2 of brief 008).
+func floor_up_at(base: Vector3) -> Vector3:
+	var p: Vector2 = Vector2(base.x, base.z)
+	var best: int = -1
+	var best_depth: float = INF
+	for s: int in surfaces_matching(p, base.y, STANDING_TOLERANCE):
+		var depth: float = surfaces[s].shape.signed_distance(p)
+		if depth < best_depth:
+			best_depth = depth
+			best = s
+	if best == -1:
+		return Vector3.UP
+	var gradient: Vector2 = surfaces[best].gradient
+	return Vector3(-gradient.x, 1.0, -gradient.y).normalized()
+
+
 ## The floors at the centre of grid cell (ix, iz), lowest first.
 func cell_floors(ix: int, iz: int) -> Array[Floor]:
 	var p: Vector2 = Vector2((ix + 0.5) * CELL_SIZE, (iz + 0.5) * CELL_SIZE)

@@ -9,6 +9,7 @@ var rotation: float
 var base_height: float
 var tag: TerrainPiece.Tag
 var shape: TerrainPiece.Shape
+var blocks_sight: bool
 ## Id of the placed piece, set by apply().
 var placed_terrain_id: int = -1
 
@@ -19,7 +20,8 @@ func _init(
 	p_rotation: float = 0.0,
 	p_base_height: float = 0.0,
 	p_tag: TerrainPiece.Tag = TerrainPiece.Tag.NONE,
-	p_shape: TerrainPiece.Shape = TerrainPiece.Shape.BOX
+	p_shape: TerrainPiece.Shape = TerrainPiece.Shape.BOX,
+	p_blocks_sight: bool = true
 ) -> void:
 	footprint_center = p_footprint_center
 	size = p_size
@@ -27,6 +29,7 @@ func _init(
 	base_height = p_base_height
 	tag = p_tag
 	shape = p_shape
+	blocks_sight = p_blocks_sight
 
 
 func validate(_state: GameState) -> String:
@@ -39,6 +42,6 @@ func validate(_state: GameState) -> String:
 
 func apply(state: GameState) -> Array[GameEvent]:
 	placed_terrain_id = state.add_terrain(
-		footprint_center, Vector2(size.x, size.z), rotation, base_height, size.y, tag, shape
+		footprint_center, Vector2(size.x, size.z), rotation, base_height, size.y, tag, shape, blocks_sight
 	).id
 	return []

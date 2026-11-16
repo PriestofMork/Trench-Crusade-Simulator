@@ -34,9 +34,8 @@ var choice_providers: Array[RollChoiceProvider] = []
 var reactions: Array[RollReaction] = []
 ## Run at the start of every activation, in order.
 var activation_rules: Array[ActivationRule] = []
-## Whether one model can see another (brief 007: a temporary always-yes
-## implementation until brief 008).
-var sight: Sight = TemporarySight.new()
+## Whether one model can see another (docs/rules/line-of-sight.md).
+var sight: Sight = LineOfSight.new()
 ## Resolves free melee attacks (Retreat; brief 007: a temporary event-only
 ## implementation until brief 009).
 var free_attack: FreeAttackHook = TemporaryFreeAttack.new()

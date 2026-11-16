@@ -7,7 +7,7 @@ extends RefCounted
 ## Format: {"terrain": [...], "models": [...]}.
 ## Terrain: "center" [x, z], "size" [own x, height, own z], optional "base"
 ## (underside height), "turn" (degrees), "tag" (none, sheer, ladder,
-## impassable), "shape" (box, ramp).
+## impassable), "shape" (box, ramp), "blocks_sight" (default true).
 ## Models: "player", "at" [x, y, z] (y is the floor height), "base" (mm),
 ## "movement" (inches).
 
@@ -49,7 +49,8 @@ static func commands(data: Dictionary, include_models: bool = true) -> Array[Com
 			deg_to_rad(float(entry.get("turn", 0.0))),
 			float(entry.get("base", 0.0)),
 			TAGS[String(entry.get("tag", "none"))],
-			SHAPES[String(entry.get("shape", "box"))]
+			SHAPES[String(entry.get("shape", "box"))],
+			bool(entry.get("blocks_sight", true))
 		))
 	if not include_models:
 		return result

@@ -1,5 +1,5 @@
 {
-	"description": "Test table for briefs 004, 006 (height) and 007 (charge). The block x > 34, 10 < z < 23 holds the charge cases: a charger (15) with a clear target (16), a multi-charge pair (17, 18), a target on a 1in crate (19) and one on a sheer 2in wall (20); a charger (21) whose path to 22 runs past an interposer (23); a model in melee with two enemies (24 with 25, 26). The strip z < 10 holds the pieces for rolls (brief 006): two 4in platforms 2.5in apart, ledges of unequal height with a gap, a 5in platform to drop from, a gap too wide to jump. The 4in block and the sheer 2in wall are in the middle row. Sizes are [own x, height, own z] in inches; centre is the footprint centre [x, z]; turn is degrees about the vertical axis; base is the underside height.",
+	"description": "Test table for briefs 004, 006 (height) and 007 (charge). The block x > 34, 10 < z < 23 holds the charge cases: a charger (15) with a clear target (16), a multi-charge pair (17, 18), a target on a 1in crate (19) and one on a sheer 2in wall (20); a charger (21) whose path to 22 runs past an interposer (23); a model in melee with two enemies (24 with 25, 26). The block 2 < x < 22, 16.5 < z < 24 holds the sight cases (brief 008): a viewer (27); 28 behind a 3in wall; 29 seen over a low wall; 30 hidden behind 29; 31 in the open; 32 behind a see-through screen; 33 on a ramp, tilted. 3 on the 2in platform looks down. The strip z < 10 holds the pieces for rolls (brief 006): two 4in platforms 2.5in apart, ledges of unequal height with a gap, a 5in platform to drop from, a gap too wide to jump. The 4in block and the sheer 2in wall are in the middle row. Sizes are [own x, height, own z] in inches; centre is the footprint centre [x, z]; turn is degrees about the vertical axis; base is the underside height.",
 	"terrain": [
 		{"name": "ramp to platform", "center": [8, 14], "size": [6, 2, 3], "shape": "ramp"},
 		{"name": "platform 2in", "center": [14, 14], "size": [6, 2, 6]},
@@ -27,7 +27,11 @@
 		{"name": "wide gap west 4in", "center": [39.5, 5], "size": [3, 4, 4]},
 		{"name": "wide gap east 4in", "center": [46, 5], "size": [3, 4, 4]},
 		{"name": "charge crate 1in", "center": [40.5, 20], "size": [3, 1, 3]},
-		{"name": "charge sheer wall 2in", "center": [45, 21], "size": [5, 2, 1.2], "tag": "sheer"}
+		{"name": "charge sheer wall 2in", "center": [45, 21], "size": [5, 2, 1.2], "tag": "sheer"},
+		{"name": "sight wall 3in", "center": [6.5, 20.5], "size": [0.5, 3, 4]},
+		{"name": "sight low wall", "center": [13.5, 20.5], "size": [0.4, 0.8, 3]},
+		{"name": "see-through screen", "center": [9.5, 19.2], "size": [3, 3, 0.4], "blocks_sight": false},
+		{"name": "sight ramp", "center": [19.5, 18], "size": [4, 1.5, 2.5], "shape": "ramp"}
 	],
 	"models": [
 		{"name": "ramp walker", "player": 0, "at": [4.3, 0, 14], "base": 32, "movement": 8},
@@ -55,6 +59,13 @@
 		{"name": "interposer", "player": 1, "at": [42, 0, 12.2], "base": 32, "movement": 6},
 		{"name": "in melee", "player": 0, "at": [44.5, 0, 16.5], "base": 32, "movement": 6},
 		{"name": "melee enemy east", "player": 1, "at": [46.16, 0, 16.5], "base": 32, "movement": 6},
-		{"name": "melee enemy south", "player": 1, "at": [44.5, 0, 14.84], "base": 32, "movement": 6}
+		{"name": "melee enemy south", "player": 1, "at": [44.5, 0, 14.84], "base": 32, "movement": 6},
+		{"name": "sight viewer", "player": 0, "at": [10, 0, 20.5], "base": 32, "movement": 6},
+		{"name": "behind the 3in wall", "player": 1, "at": [4.5, 0, 20.5], "base": 32, "movement": 6},
+		{"name": "over the low wall", "player": 1, "at": [16, 0, 20.5], "base": 40, "movement": 6},
+		{"name": "hidden by 29", "player": 1, "at": [19, 0, 20.5], "base": 25, "movement": 6},
+		{"name": "in the open", "player": 1, "at": [12, 0, 23.3], "base": 32, "movement": 6},
+		{"name": "behind the screen", "player": 1, "at": [9, 0, 17.8], "base": 32, "movement": 6},
+		{"name": "on the sight ramp", "player": 1, "at": [19.5, 0.75, 18], "base": 32, "movement": 6}
 	]
 }

@@ -28,6 +28,9 @@ var base_height: float
 ## Vertical extent from the underside to the highest point of the top, inches.
 var height: float
 var tag: Tag
+## Whether the piece blocks line of sight (docs/rules/line-of-sight.md,
+## "Terrain"; ruling 5 of brief 008). It blocks movement either way.
+var blocks_sight: bool = true
 
 
 func _init(
@@ -38,7 +41,8 @@ func _init(
 	p_base_height: float,
 	p_height: float,
 	p_tag: Tag = Tag.NONE,
-	p_shape: Shape = Shape.BOX
+	p_shape: Shape = Shape.BOX,
+	p_blocks_sight: bool = true
 ) -> void:
 	id = p_id
 	footprint_center = p_footprint_center
@@ -48,6 +52,7 @@ func _init(
 	height = p_height
 	tag = p_tag
 	shape = p_shape
+	blocks_sight = p_blocks_sight
 
 
 ## Half the footprint along the piece's own x and z axes.

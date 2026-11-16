@@ -40,6 +40,9 @@ var _next_terrain_id: int = 1
 ## The height field for the current terrain, built when first asked for.
 ## Derived data only: dropped whenever terrain is added.
 var _height_field: HeightField = null
+## The terrain as line of sight sees it, built when first asked for; dropped
+## with the height field.
+var _sight_terrain: SightTerrain = null
 
 
 func _init(
@@ -159,6 +162,14 @@ func height_field() -> HeightField:
 	return _height_field
 
 
+## The terrain as solids for line of sight. Built from `terrain` on first use
+## and kept until the terrain changes; never changed by callers.
+func sight_terrain() -> SightTerrain:
+	if _sight_terrain == null:
+		_sight_terrain = SightTerrain.new(terrain)
+	return _sight_terrain
+
+
 ## Only for commands: adds a terrain piece and returns it.
 func add_terrain(
 	footprint_center: Vector2,
@@ -167,12 +178,14 @@ func add_terrain(
 	base_height: float,
 	height: float,
 	tag: TerrainPiece.Tag,
-	shape: TerrainPiece.Shape
+	shape: TerrainPiece.Shape,
+	blocks_sight: bool = true
 ) -> TerrainPiece:
 	var piece: TerrainPiece = TerrainPiece.new(
-		_next_terrain_id, footprint_center, footprint_size, rotation, base_height, height, tag, shape
+		_next_terrain_id, footprint_center, footprint_size, rotation, base_height, height, tag, shape, blocks_sight
 	)
 	_next_terrain_id += 1
 	terrain.append(piece)
 	_height_field = null
+	_sight_terrain = null
 	return piece
