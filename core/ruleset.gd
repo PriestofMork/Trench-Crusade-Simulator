@@ -34,6 +34,9 @@ var choice_providers: Array[RollChoiceProvider] = []
 var reactions: Array[RollReaction] = []
 ## Run at the start of every activation, in order.
 var activation_rules: Array[ActivationRule] = []
+## Whether one model can see another (brief 007: a temporary always-yes
+## implementation until brief 008).
+var sight: Sight = TemporarySight.new()
 
 
 func action(id: StringName) -> ActionDef:
@@ -85,6 +88,8 @@ static func behaviour(behaviour_name: String) -> ActionBehaviour:
 			return MoveBehaviour.new()
 		"roll_then_move":
 			return RollThenMoveBehaviour.new()
+		"charge":
+			return ChargeBehaviour.new()
 	push_error("Ruleset: unknown action behaviour '%s'" % behaviour_name)
 	return ActionBehaviour.new()
 

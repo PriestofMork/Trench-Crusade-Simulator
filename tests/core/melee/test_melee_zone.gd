@@ -84,7 +84,7 @@ func test_action_availability_in_melee() -> void:
 	_place(1, Vector3(40, 0, 40))
 	TurnHelper.ready_to_act(state, a)
 	var model: ModelState = state.get_model(a)
-	for action: StringName in [&"move", &"dash"]:
+	for action: StringName in [&"move", &"dash", &"charge"]:
 		assert_string_contains(BeginActionCommand.unavailable_reason(state, model, action), "In melee", String(action))
 	assert_ne(state.execute(BeginActionCommand.new(0, a, &"move")), "", "Move is refused")
 	assert_ne(state.execute(BeginActionCommand.new(0, a, &"dash")), "", "Dash is refused")

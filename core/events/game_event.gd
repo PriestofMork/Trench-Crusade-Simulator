@@ -32,6 +32,15 @@ enum Kind {
 	MOVE_ROLL_POINT,
 	## A move with rolls in it stopped short of its end ("reason", "at").
 	MOVE_STOPPED,
+	## A charge was declared ("declared_id", "target_id": the actual target,
+	## "interposed": bool, "path", "length", "needed").
+	CHARGE_DECLARED,
+	## The charge distance is known ("roll", "distance", "length", "reaches").
+	CHARGE_DISTANCE,
+	## The charge fell short ("target_id", "at", "distance").
+	CHARGE_FAILED,
+	## The charger is in base contact ("target_id", "charged": Array[int], "at").
+	CHARGED,
 }
 
 var kind: Kind

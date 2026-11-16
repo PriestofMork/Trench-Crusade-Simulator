@@ -239,3 +239,4 @@ static func _clear_activation(t: TurnState) -> void:
 	t.actions_used.clear()
 	t.move_action_used = false
 	t.stood_up = false
+	t.charged.clear()

@@ -1,6 +1,7 @@
 {
 	"actions": [
 		{"id": "move", "label": "Move", "move_action": true, "risky": false, "behaviour": "move", "melee": "forbidden"},
+		{"id": "charge", "label": "Charge", "move_action": true, "risky": false, "behaviour": "charge", "melee": "forbidden"},
 		{"id": "dash", "label": "Dash", "move_action": false, "risky": true, "behaviour": "roll_then_move", "melee": "forbidden"}
 	],
 	"marker_spending": [

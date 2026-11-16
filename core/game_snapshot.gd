@@ -80,6 +80,7 @@ static func _copy_turn(source: TurnState) -> TurnState:
 	copy.actions_used = source.actions_used.duplicate()
 	copy.move_action_used = source.move_action_used
 	copy.stood_up = source.stood_up
+	copy.charged = source.charged.duplicate()
 	return copy
 
 

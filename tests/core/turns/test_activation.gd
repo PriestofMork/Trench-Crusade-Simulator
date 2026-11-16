@@ -37,8 +37,11 @@ func test_actions_are_registered_as_data() -> void:
 	assert_false(move.risky)
 	assert_false(dash.move_action)
 	assert_true(dash.risky)
+	var charge: ActionDef = state.rules.action(&"charge")
+	assert_true(charge.move_action, "Charge is a move action (brief 007)")
 	assert_eq(move.melee, ActionDef.Melee.FORBIDDEN)
 	assert_eq(dash.melee, ActionDef.Melee.FORBIDDEN)
+	assert_eq(charge.melee, ActionDef.Melee.FORBIDDEN)
 	assert_null(state.rules.action(&"retreat"), "not yet")
 
 

@@ -20,6 +20,9 @@ var actions_used: Array[StringName] = []
 var move_action_used: bool = false
 ## Whether the active model stood up at the start of this activation.
 var stood_up: bool = false
+## Ids of the models the active model charged this activation (ruling 8 of
+## brief 007: every enemy within 1" where the charge ended), for later rules.
+var charged: Array[int] = []
 
 
 func has_activated(model_id: int) -> bool:

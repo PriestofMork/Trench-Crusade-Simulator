@@ -69,6 +69,18 @@ static func injury(p_roller: int, p_actor_id: int, p_target_id: int, p_dice_kept
 	return request
 
 
+## A plain d6 by `p_roller` (a charge's distance): no outcome, just the total.
+static func d6(
+	p_roller: int, p_actor_id: int, p_target_id: int, p_action_id: StringName, p_label: String
+) -> RollRequest:
+	var request: RollRequest = RollRequest.new(Kind.D6, p_roller, 1)
+	request.actor_id = p_actor_id
+	request.target_id = p_target_id
+	request.action_id = p_action_id
+	request.label = p_label
+	return request
+
+
 static func roll_off() -> RollRequest:
 	var request: RollRequest = RollRequest.new(Kind.ROLL_OFF, -1, 1)
 	request.label = "Roll-off"
