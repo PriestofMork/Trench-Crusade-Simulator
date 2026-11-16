@@ -89,20 +89,31 @@ Sheer, is a sheer surface and needs the climb below.
 - Retreat is a move action that lets the model leave the 1" zone. Before it leaves,
   every enemy model within 1" makes a free melee attack action against it.
 
-### As implemented (brief 007), to be confirmed
+### Details (confirmed)
 
 - The order is: declare the target, roll the D6, then move. A charge moves along the
   shortest legal path and may not use anything that needs a roll (sheer climbs, gap
   jumps, drops of 3" or more).
-- A target that cannot be reached even with a 6 cannot be declared.
+- A charge can always be declared against a visible enemy within 12", even if it
+  cannot succeed. It then fails as described above.
 - An enemy interposes only if its 1" zone is entered before the target's own 1" zone.
-  One entered afterwards is part of a multi-charge instead.
-- Base contact needs the two floors to be no more than 1" apart. Sliding around the
-  target stays on one level.
-- Exactly 1" apart is outside melee. Down models count as in melee, and currently
-  also make the free attack against a retreating model.
-- After the free attacks, a retreating model may end its move, or its activation,
-  while still in melee (so a surrounded model is never stuck).
+  One entered afterwards is part of a multi-charge instead. An interposing model
+  becomes the target even if it is not visible or is further than 12" away.
+- **Base contact** means the two bases touch seen from above and the two cylinders
+  overlap in height: the model standing higher has its feet below the top of the
+  model standing lower. They do not have to stand on the same level. Example: a
+  model more than 2" tall can be charged by, or charge, a model on a 2" step right
+  next to it.
+- Sliding around the target may change level, as long as contact is kept the whole
+  way and the movement needs no roll.
+- Exactly 1" apart is outside melee.
+- Down models are ordinary models with the Down effect (see `markers.md`): they
+  count as in melee and make the free attack against a retreating model.
+- After the free attacks, a retreating model may end its move while still in melee.
+  If a free attack puts it Down, its activation ends where it is.
+
+Not implemented yet (brief 007 built an earlier reading): declaring a hopeless
+charge, contact across heights, sliding across levels.
 
 ## Open questions
 

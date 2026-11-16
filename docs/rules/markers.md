@@ -50,7 +50,23 @@ The reverse of blood markers. Spent by the model's own player:
 - Melee injury rolls against a Down model get +1 die.
 - A Down result against a Down model places one extra blood marker instead.
 - Down models do not count as standing for morale or for choosing who activates first.
+- A Down model is otherwise an ordinary model: it is in melee with enemies within 1"
+  and makes free attacks against retreating models.
+- A Down model cannot move or be moved. The only exception is falling.
+- Every success roll made by a Down model gets -1 die.
+- A model that goes Down during its own activation ends that activation.
+
+### Going Down next to a ledge
+
+- When a model suffers a Down result while any edge of its base is within 1" of a
+  ledge, it first makes a success roll. On a failure it falls over the edge
+  (resolved like a failed jump, see `movement.md`) and is Down where it lands. On a
+  success it goes Down where it is.
 
 ## Open questions
 
 1. What can a model do if it is prevented from standing up?
+2. Ledge: how large a drop counts? Is the ledge roll made before the Down, so
+   without the Down penalty? (Assumed: yes.)
+3. A charge with no possible route at all (for example a target on a sheer cliff):
+   what does the charger do?

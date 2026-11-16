@@ -30,5 +30,8 @@ Open a new session in this folder and say:
 
 ## Planned next (not yet written)
 
+- 008b: charge corrections (hopeless charges can be declared, contact and sliding
+  across heights) and the Down rules (cannot move, -1 die, activation ends, ledge
+  fall). To start once 008 is finished, since both touch the charge code.
 - 009: ranged and melee attacks, armour, Bloodbath, weapons as data
 - 010: import the TTS models and show them on their bases
