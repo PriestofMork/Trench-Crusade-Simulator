@@ -1,6 +1,6 @@
 # Line of sight
 
-Status: **draft**. Not to be implemented until the open questions are closed.
+Status: visibility (yes or no) is implemented by brief 008. Cover is still open.
 
 ## Principle
 

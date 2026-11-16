@@ -89,6 +89,21 @@ Sheer, is a sheer surface and needs the climb below.
 - Retreat is a move action that lets the model leave the 1" zone. Before it leaves,
   every enemy model within 1" makes a free melee attack action against it.
 
+### As implemented (brief 007), to be confirmed
+
+- The order is: declare the target, roll the D6, then move. A charge moves along the
+  shortest legal path and may not use anything that needs a roll (sheer climbs, gap
+  jumps, drops of 3" or more).
+- A target that cannot be reached even with a 6 cannot be declared.
+- An enemy interposes only if its 1" zone is entered before the target's own 1" zone.
+  One entered afterwards is part of a multi-charge instead.
+- Base contact needs the two floors to be no more than 1" apart. Sliding around the
+  target stays on one level.
+- Exactly 1" apart is outside melee. Down models count as in melee, and currently
+  also make the free attack against a retreating model.
+- After the free attacks, a retreating model may end its move, or its activation,
+  while still in melee (so a surrounded model is never stuck).
+
 ## Open questions
 
 1. Does a model in melee have any way to move other than Retreat? (Assumed: no.)
