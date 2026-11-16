@@ -30,6 +30,14 @@ never be hard-coded where they are used.
   the target blocks sight lines exactly like blocking terrain. This applies to
   friendly and enemy models alike.
 
+## Tilt on slopes
+
+- For sight and for being seen or hit, a model's cylinder is tilted to sit flush on
+  the surface it stands on, exactly as the model is drawn. There is no cap on the
+  tilt.
+- Everything else keeps the upright cylinder and the base seen from above:
+  movement, support, the 1" melee zone and headroom.
+
 ## Visibility
 
 - A target is visible if a straight, unblocked line exists from any point of the

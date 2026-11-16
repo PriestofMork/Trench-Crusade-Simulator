@@ -24,11 +24,11 @@ Open a new session in this folder and say:
 | `003-indicator-and-friendly-models.md` | Done |
 | `004-height-part-1.md` | Done |
 | `005-turns-rolls-dash.md` | Done |
-| `006-height-part-2.md` | Ready |
+| `006-height-part-2.md` | Done |
+| `007-charge-melee-retreat.md` | Ready |
 
 ## Planned next (not yet written)
 
-- 007: charge, the 1" melee zone and retreat (free attacks stubbed until attacks exist)
-- 008: line of sight between cylinders
+- 008: line of sight between cylinders (tilted on slopes), replacing the temporary sight answer
 - 009: ranged and melee attacks, armour, Bloodbath, weapons as data
 - 010: import the TTS models and show them on their bases
