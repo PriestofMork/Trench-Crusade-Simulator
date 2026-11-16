@@ -125,22 +125,38 @@ func ask_choice(decision: PendingDecision) -> void:
 		var rows: VBoxContainer = VBoxContainer.new()
 		rows.name = "Rows"
 		_prompt_buttons.add_child(rows)
+		rows.add_theme_constant_override("separation", 6)
 		for i: int in choice.options.size():
 			var option: RollChoice.Option = choice.options[i]
 			var row: HBoxContainer = HBoxContainer.new()
-			row.add_child(UiStyle.label("%s:" % option.label, 15))
+			row.name = "Row%d" % i
+			row.add_theme_constant_override("separation", 4)
+			# A fixed width and no wrapping: an autowrapping label in a row gets
+			# no width and wraps one letter per line, stretching the whole row.
+			var name_label: Label = UiStyle.label("%s:" % option.label, 15)
+			name_label.autowrap_mode = TextServer.AUTOWRAP_OFF
+			name_label.custom_minimum_size = Vector2(90, 0)
+			name_label.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+			row.add_child(name_label)
 			var group: ButtonGroup = ButtonGroup.new()
 			for amount: int in range(0, option.maximum + 1):
 				var button: Button = UiStyle.button(str(amount), "Pick%d_%d" % [i, amount])
 				button.custom_minimum_size = Vector2(40, 32)
+				button.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 				button.toggle_mode = true
 				button.button_group = group
 				button.button_pressed = amount == 0
+				button.add_theme_color_override("font_pressed_color", UiStyle.GOLD_COLOUR)
+				button.add_theme_stylebox_override("pressed", _picked_box())
 				var index: int = i
-				button.pressed.connect(func() -> void: _picked[index] = amount)
+				button.toggled.connect(func(on: bool) -> void:
+					if on:
+						_picked[index] = amount
+				)
 				row.add_child(button)
 			rows.add_child(row)
 		var spend: Button = UiStyle.button("Spend these", "SpendPicked")
+		spend.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
 		spend.pressed.connect(func() -> void: choice_answered.emit(_picked.duplicate()))
 		rows.add_child(spend)
 	_prompt_box.visible = true
@@ -160,6 +176,23 @@ func press_choice(amount: int) -> bool:
 	return true
 
 
+## The look of the picked count in a row: a gold frame, no extra margins.
+static func _picked_box() -> StyleBoxFlat:
+	var box: StyleBoxFlat = StyleBoxFlat.new()
+	box.bg_color = Color(0.25, 0.2, 0.08)
+	box.border_color = UiStyle.GOLD_COLOUR
+	box.set_border_width_all(2)
+	box.set_corner_radius_all(4)
+	box.set_content_margin_all(4)
+	return box
+
+
+## A button of the prompt by node name (Spend<n>, Pick<option>_<n>,
+## SpendPicked), or null. For scripted runs that click it for real.
+func prompt_button(button_name: String) -> Button:
+	return _prompt_buttons.find_child(button_name, true, false) as Button
+
+
 ## In a prompt with several options: picks `amounts` and presses Spend.
 func press_choices(amounts: Array[int]) -> bool:
 	var rows: Node = _prompt_buttons.get_node_or_null("Rows")
@@ -170,7 +203,6 @@ func press_choices(amounts: Array[int]) -> bool:
 		if button == null:
 			return false
 		button.button_pressed = true
-		button.pressed.emit()
 	(rows.get_node("SpendPicked") as Button).pressed.emit()
 	return true
 

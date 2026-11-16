@@ -285,3 +285,25 @@ func test_armour_could_be_added_as_an_ordinary_provider() -> void:
 	var events: Array[GameEvent] = _start_injury(b1, {&"armour": 1})
 	var resolved: GameEvent = _last(events, GameEvent.Kind.ROLL_RESOLVED)
 	assert_eq(resolved.result.minus_dice, 1)
+
+
+func test_blood_infection_and_blessing_on_a_success_roll() -> void:
+	var dasher: ModelState = state.get_model(a1)
+	dasher.set_markers(Markers.BLOOD, 1)
+	dasher.set_markers(Markers.INFECTION, 1)
+	dasher.set_markers(Markers.BLESSING, 2)
+	_ok(BeginActionCommand.new(0, a1, &"dash"))
+	# The opponent first, both kinds in one prompt (infection grew to 2).
+	assert_eq(state.pending.player, 1)
+	assert_eq(state.pending.choice.options.size(), 2)
+	assert_eq(state.pending.choice.options[1].maximum, 2)
+	_ok(RollChoiceCommand.new(1, 0, [1, 2] as Array[int]))
+	assert_eq(state.pending.player, 0, "then the rolling player's blessing")
+	assert_eq(state.pending.choice.provider_id, &"blessing")
+	var events: Array[GameEvent] = _ok(RollChoiceCommand.new(0, 1))
+	var resolved: GameEvent = _last(events, GameEvent.Kind.ROLL_RESOLVED)
+	assert_eq(resolved.result.minus_dice, 3)
+	assert_eq(resolved.result.plus_dice, 1)
+	assert_eq(dasher.marker_count(Markers.BLOOD), 0)
+	assert_eq(dasher.marker_count(Markers.INFECTION), 0)
+	assert_eq(dasher.marker_count(Markers.BLESSING), 1)
