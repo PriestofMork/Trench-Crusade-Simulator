@@ -46,6 +46,41 @@ static func grant_move(state: GameState, model_id: int) -> void:
 	push_error("TurnHelper: could not grant a move to model %d" % model_id)
 
 
+## Brings `state` to where `model_id`'s player may start its activation with
+## any action (nothing pending, no other model active, the model not yet
+## activated this turn), ending other activations as needed.
+static func ready_to_act(state: GameState, model_id: int) -> void:
+	var model: ModelState = state.get_model(model_id)
+	if model == null:
+		return
+	if state.turn.turn == 0:
+		_run(state, StartGameCommand.new())
+	for guard: int in 200:
+		var pending: PendingDecision = state.pending
+		if pending != null:
+			match pending.kind:
+				PendingDecision.Kind.ROLL_OFF:
+					_run(state, RollOffCommand.new(0))
+				PendingDecision.Kind.CHOOSE_FIRST_PLAYER:
+					_run(state, ChooseFirstPlayerCommand.new(pending.player, model.player))
+				PendingDecision.Kind.ROLL_CHOICE:
+					_run(state, RollChoiceCommand.new(pending.player, 0))
+				PendingDecision.Kind.MOVE:
+					_run(state, EndActivationCommand.new(pending.player, pending.model_id))
+				_:
+					push_error("TurnHelper: cannot settle a %s decision" % PendingDecision.Kind.keys()[pending.kind])
+					return
+			continue
+		var t: TurnState = state.turn
+		if t.active_model_id != -1:
+			_run(state, EndActivationCommand.new(t.player_to_act, t.active_model_id))
+			continue
+		if t.player_to_act == model.player and not t.has_activated(model_id):
+			return
+		_run(state, EndActivationCommand.new(t.player_to_act, _other_unactivated(state, t.player_to_act, model_id)))
+	push_error("TurnHelper: could not get model %d ready to act" % model_id)
+
+
 ## A MoveCommand for `model_id` along `waypoints`, after granting it a move.
 static func move(state: GameState, model_id: int, waypoints: Array[Vector3]) -> MoveCommand:
 	grant_move(state, model_id)

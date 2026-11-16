@@ -4,7 +4,7 @@ extends ActionBehaviour
 ## model's Movement (halved after standing up); what is left over is lost.
 
 
-func begin(state: GameState, model: ModelState, action: ActionDef, events: Array[GameEvent]) -> void:
+func begin(state: GameState, model: ModelState, action: ActionDef, events: Array[GameEvent], _plan: ActionPlan = null) -> void:
 	TurnFlow.offer_move(state, model, action.id, events)
 
 

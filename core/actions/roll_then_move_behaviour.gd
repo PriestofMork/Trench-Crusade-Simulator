@@ -5,7 +5,7 @@ extends ActionBehaviour
 ## Dash is this. What a failure does is up to the roll reactions.
 
 
-func begin(state: GameState, model: ModelState, action: ActionDef, events: Array[GameEvent]) -> void:
+func begin(state: GameState, model: ModelState, action: ActionDef, events: Array[GameEvent], _plan: ActionPlan = null) -> void:
 	var request: RollRequest = RollRequest.success(model.player, model.id, action.id, action.risky, action.label)
 	var model_id: int = model.id
 	var action_id: StringName = action.id

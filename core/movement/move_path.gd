@@ -27,6 +27,8 @@ var waypoints: Array[Vector3]
 var budget: float
 ## How drops of 3" or more are taken (Transitions.DescentMode).
 var descent_mode: Transitions.DescentMode = Transitions.DescentMode.DROP
+## How enemy 1" zones are treated (null: the normal rule). See EnemyZones.
+var zones: EnemyZones = null
 ## "" if legal, else why not.
 var error: String = ""
 ## Why it is not legal, as a category the UI can react to.
@@ -44,12 +46,13 @@ var segments: Array[MoveSegment] = []
 ## `p_budget` negative means the model's full Movement characteristic.
 func _init(
 	state: GameState, p_model_id: int, p_waypoints: Array[Vector3], p_budget: float = -1.0,
-	p_descent_mode: Transitions.DescentMode = Transitions.DescentMode.DROP
+	p_descent_mode: Transitions.DescentMode = Transitions.DescentMode.DROP, p_zones: EnemyZones = null
 ) -> void:
 	model_id = p_model_id
 	waypoints = p_waypoints
 	budget = p_budget
 	descent_mode = p_descent_mode
+	zones = p_zones
 	error = _check(state)
 
 
@@ -89,7 +92,7 @@ func _check(state: GameState) -> String:
 		rejection = Rejection.TOO_FAR
 		return _too_far(flat, budget)
 
-	var legality: MoveLegality = MoveLegality.new(state, model)
+	var legality: MoveLegality = MoveLegality.new(state, model, null, zones)
 	legality.descent_mode = descent_mode
 	if legality.start_surfaces.is_empty():
 		return "The model is not standing on a floor."

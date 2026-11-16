@@ -13,6 +13,11 @@ const DECIDERS: Dictionary[String, MarkerSpendChoice.Decider] = {
 	"owner": MarkerSpendChoice.Decider.OWNER,
 	"opponent": MarkerSpendChoice.Decider.OPPONENT,
 }
+const MELEE: Dictionary[String, ActionDef.Melee] = {
+	"any": ActionDef.Melee.ANY,
+	"forbidden": ActionDef.Melee.FORBIDDEN,
+	"required": ActionDef.Melee.REQUIRED,
+}
 const ROLL_KINDS: Dictionary[String, RollRequest.Kind] = {
 	"success": RollRequest.Kind.SUCCESS,
 	"injury": RollRequest.Kind.INJURY,
@@ -99,7 +104,8 @@ static func from_data(data: Dictionary) -> Ruleset:
 	for entry: Dictionary in data.get("actions", []):
 		rules.add_action(ActionDef.new(
 			StringName(entry["id"]), String(entry["label"]), bool(entry.get("move_action", false)),
-			bool(entry.get("risky", false)), behaviour(String(entry["behaviour"]))
+			bool(entry.get("risky", false)), behaviour(String(entry["behaviour"])),
+			MELEE[String(entry.get("melee", "any"))]
 		))
 	for entry: Dictionary in data.get("marker_spending", []):
 		var kinds: Array[StringName] = []

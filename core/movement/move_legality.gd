@@ -34,6 +34,9 @@ extends RefCounted
 ## the way may come within 1" of an enemy, measured in 3D between the two
 ## cylinders (so a model on a bridge is not held back by an enemy far below).
 ## Touching is allowed; overlapping is not. Exactly 1" from an enemy is allowed.
+## A charge or a retreat changes the enemy rule through EnemyZones (brief 007):
+## open zones only keep the enemy's base out, and a retreat must still end
+## outside every zone.
 
 enum Result {
 	OK, OFF_TABLE, TERRAIN, MODEL, ENEMY, NO_FLOOR, NOT_SUPPORTED, HEADROOM, NEEDS_ROLL, NO_WAY, TOO_WIDE
@@ -84,13 +87,20 @@ var _enemy_centres: PackedVector2Array = PackedVector2Array()
 var _enemy_bottoms: PackedFloat64Array = PackedFloat64Array()
 var _enemy_tops: PackedFloat64Array = PackedFloat64Array()
 var _enemy_radii: PackedFloat64Array = PackedFloat64Array()
+## Per enemy: the zone kept while passing and where a move ends (inches edge
+## to edge; EnemyZones.OPEN keeps only the base out, IGNORED nothing).
+var _enemy_pass: PackedFloat64Array = PackedFloat64Array()
+var _enemy_stop: PackedFloat64Array = PackedFloat64Array()
+## Whether any enemy's zone is wider for ending a move than for passing.
+var _stop_zones_wider: bool = false
 var _friend_centres: PackedVector2Array = PackedVector2Array()
 var _friend_bottoms: PackedFloat64Array = PackedFloat64Array()
 var _friend_tops: PackedFloat64Array = PackedFloat64Array()
 var _friend_radii: PackedFloat64Array = PackedFloat64Array()
 
 
-func _init(state: GameState, model: ModelState, p_field: HeightField = null) -> void:
+## `zones` (null for the normal rule) says how enemy 1" zones are treated.
+func _init(state: GameState, model: ModelState, p_field: HeightField = null, zones: EnemyZones = null) -> void:
 	radius = model.base_radius_inches()
 	model_height = model.height_inches()
 	field = p_field if p_field != null else state.height_field()
@@ -109,6 +119,15 @@ func _init(state: GameState, model: ModelState, p_field: HeightField = null) -> 
 			_enemy_bottoms.append(other.position.y)
 			_enemy_tops.append(other.position.y + other.height_inches())
 			_enemy_radii.append(other.base_radius_inches())
+			var passing: float = ENEMY_DISTANCE_INCHES
+			var stopping: float = ENEMY_DISTANCE_INCHES
+			if zones != null:
+				passing = zones.pass_distance(other.id, ENEMY_DISTANCE_INCHES)
+				stopping = zones.stop_distance(other.id, ENEMY_DISTANCE_INCHES)
+			_enemy_pass.append(passing)
+			_enemy_stop.append(stopping)
+			if stopping > passing:
+				_stop_zones_wider = true
 		else:
 			_friend_centres.append(centre)
 			_friend_bottoms.append(other.position.y)
@@ -155,6 +174,13 @@ func stop_result_if_passing(p: Vector2, surface: int) -> Result:
 	if not field.headroom_clear(p, surface, radius, _headroom):
 		return Result.HEADROOM
 	var y: float = field.surface_height(surface, p)
+	if _stop_zones_wider:
+		for i: int in _enemy_centres.size():
+			if _enemy_stop[i] <= _enemy_pass[i]:
+				continue
+			var stop_limit: float = _enemy_limit(i, y, y, _enemy_stop[i])
+			if stop_limit > 0.0 and p.distance_to(_enemy_centres[i]) < stop_limit - EPSILON:
+				return Result.ENEMY
 	for i: int in _friend_centres.size():
 		if p.distance_to(_friend_centres[i]) >= radius + _friend_radii[i] - EPSILON:
 			continue
@@ -558,7 +584,7 @@ func clearance(p: Vector2, surface: int, cap: float = INF) -> float:
 	var best: float = field.clearance(p, surface, radius, cap)
 	var y: float = field.surface_height(surface, p)
 	for i: int in _enemy_centres.size():
-		var limit: float = _enemy_limit(i, y, y)
+		var limit: float = _enemy_limit(i, y, y, _enemy_pass[i])
 		if limit > 0.0:
 			best = minf(best, p.distance_to(_enemy_centres[i]) - limit)
 	return best
@@ -571,7 +597,7 @@ func stand_value(p: Vector2, surface: int, cap: float = INF) -> float:
 	var best: float = field.stand_value(p, surface, radius, model_height, cap)
 	var y: float = field.surface_height(surface, p)
 	for i: int in _enemy_centres.size():
-		var limit: float = _enemy_limit(i, y, y)
+		var limit: float = _enemy_limit(i, y, y, maxf(_enemy_stop[i], _enemy_pass[i]))
 		if limit > 0.0:
 			best = minf(best, p.distance_to(_enemy_centres[i]) - limit)
 	for i: int in _friend_centres.size():
@@ -614,7 +640,7 @@ func _enemies_clear(a: Vector2, b: Vector2, ya: float, yb: float) -> bool:
 	var low: float = minf(ya, yb)
 	var high: float = maxf(ya, yb)
 	for i: int in _enemy_centres.size():
-		var limit: float = _enemy_limit(i, low, high)
+		var limit: float = _enemy_limit(i, low, high, _enemy_pass[i])
 		if limit <= 0.0:
 			continue
 		if PlanarGeometry.point_segment_distance(_enemy_centres[i], a, b) < limit - EPSILON:
@@ -623,15 +649,18 @@ func _enemies_clear(a: Vector2, b: Vector2, ya: float, yb: float) -> bool:
 
 
 ## The centre-to-centre distance the mover must keep from enemy i while its base
-## is somewhere between heights low and high, or 0 if the cylinders are 1" or
-## more apart vertically anyway.
-func _enemy_limit(i: int, low: float, high: float) -> float:
+## is somewhere between heights low and high, keeping `zone` inches (edge to
+## edge) from it, or 0 if the cylinders are that far apart vertically anyway.
+## An open zone (0) keeps only the bases from overlapping; IGNORED keeps nothing.
+func _enemy_limit(i: int, low: float, high: float, zone: float = ENEMY_DISTANCE_INCHES) -> float:
+	if zone < 0.0:
+		return 0.0
 	var gap: float = 0.0
 	if _enemy_bottoms[i] > high + model_height:
 		gap = _enemy_bottoms[i] - (high + model_height)
 	elif low > _enemy_tops[i]:
 		gap = low - _enemy_tops[i]
-	if gap >= ENEMY_DISTANCE_INCHES:
+	if gap > 0.0 and gap >= zone:
 		return 0.0
-	var horizontal: float = sqrt(ENEMY_DISTANCE_INCHES * ENEMY_DISTANCE_INCHES - gap * gap)
+	var horizontal: float = sqrt(maxf(zone * zone - gap * gap, 0.0))
 	return radius + _enemy_radii[i] + horizontal

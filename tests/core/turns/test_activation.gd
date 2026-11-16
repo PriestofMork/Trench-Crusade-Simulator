@@ -37,7 +37,9 @@ func test_actions_are_registered_as_data() -> void:
 	assert_false(move.risky)
 	assert_false(dash.move_action)
 	assert_true(dash.risky)
-	assert_null(state.rules.action(&"charge"), "not in this brief")
+	assert_eq(move.melee, ActionDef.Melee.FORBIDDEN)
+	assert_eq(dash.melee, ActionDef.Melee.FORBIDDEN)
+	assert_null(state.rules.action(&"retreat"), "not yet")
 
 
 func test_selecting_is_not_activating_the_first_action_is() -> void:

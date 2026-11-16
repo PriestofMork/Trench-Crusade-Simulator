@@ -104,6 +104,10 @@ var size_z: int = 0
 var field: HeightField
 var legality: MoveLegality
 var descent_mode: Transitions.DescentMode = Transitions.DescentMode.DROP
+## How enemy 1" zones are treated (null: the normal rule); see EnemyZones.
+var zones: EnemyZones = null
+## Whether routes may make rolls (a charge may not, ruling 5 of brief 007).
+var allow_rolls: bool = true
 ## How long building took, for reports: "setup_ms", "search_ms" and
 ## "tier_<n>_ms" (wall-clock; diagnostics only, never used for rules).
 var timings: Dictionary = {}
@@ -189,11 +193,17 @@ var _heap_state: PackedInt32Array = PackedInt32Array()
 ## `p_descent_mode` decides how drops of 3" or more are taken (see
 ## Transitions.DescentMode); a move along a path from this field must be sent
 ## with the same mode.
+## `p_zones` and `p_allow_rolls` change the enemy rule and forbid rolls, for a
+## charge or a retreat (brief 007); a path from such a field is legal under
+## the same settings.
 func _init(
 	state: GameState, p_model_id: int, p_budget: float = -1.0, p_cell_size: float = CELL_SIZE,
-	p_descent_mode: Transitions.DescentMode = Transitions.DescentMode.DROP
+	p_descent_mode: Transitions.DescentMode = Transitions.DescentMode.DROP, p_zones: EnemyZones = null,
+	p_allow_rolls: bool = true
 ) -> void:
 	descent_mode = p_descent_mode
+	zones = p_zones
+	allow_rolls = p_allow_rolls
 	model_id = p_model_id
 	cell_size = p_cell_size
 	var model: ModelState = state.get_model(model_id)
@@ -203,8 +213,9 @@ func _init(
 	start = model.position
 	budget = p_budget if p_budget >= 0.0 else model.movement
 	_start_2d = Vector2(start.x, start.z)
-	legality = MoveLegality.new(state, model)
+	legality = MoveLegality.new(state, model, null, zones)
 	legality.descent_mode = descent_mode
+	legality.allow_rolls = allow_rolls
 	field = legality.field
 	_radius = legality.radius
 	_limit = budget + MARGIN_CELLS * cell_size
