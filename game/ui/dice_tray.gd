@@ -207,7 +207,29 @@ func press_choices(amounts: Array[int]) -> bool:
 	return true
 
 
-## INJURY_APPLIED: what the injury roll did, in words.
+## Lines of text with no dice (brief 007: the temporary free attacks).
+func show_notes(title: String, lines: PackedStringArray) -> void:
+	_finish_animation(true)
+	_roll = null
+	_result = null
+	_effect = ""
+	_title.text = "[b]%s[/b]" % title
+	_breakdown.text = "\n".join(lines)
+	_clear_prompt()
+	_clear_dice()
+	_total.text = ""
+	_outcome.text = ""
+	_hint.visible = false
+	visible = true
+
+
+## The tray's text, for scripted checks.
+func text() -> String:
+	return "%s | %s | %s | %s" % [_title.get_parsed_text(), _breakdown.get_parsed_text(), _total.get_parsed_text(), _outcome.get_parsed_text()]
+
+
+## INJURY_APPLIED: what the injury roll did, in words (and the charge
+## distance after the charge D6).
 func show_effect(text: String) -> void:
 	_effect = text
 	if not _animating and _result != null:
@@ -336,7 +358,7 @@ func _show_outcome() -> void:
 			text = "[color=#%s]Success[/color]" % UiStyle.GOOD_COLOUR.to_html(false)
 		RollResult.Outcome.FAILURE:
 			text = "[color=#%s]Failure[/color]" % UiStyle.BAD_COLOUR.to_html(false)
-	if request.kind == RollRequest.Kind.INJURY and _effect != "":
+	if (request.kind == RollRequest.Kind.INJURY or request.kind == RollRequest.Kind.D6) and _effect != "":
 		text = "[color=#%s]%s[/color]" % [UiStyle.GOLD_COLOUR.to_html(false), _effect]
 	if _ended_activation:
 		text += "  [color=#%s]— activation ends[/color]" % UiStyle.BAD_COLOUR.to_html(false)

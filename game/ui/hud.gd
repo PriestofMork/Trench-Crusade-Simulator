@@ -12,6 +12,8 @@ signal roll_off_pressed
 signal undo_pressed
 signal redo_pressed
 signal descent_pressed
+## FREE_ATTACK_ORDER: the enemy player picked the next attacker.
+signal attacker_picked(attacker_id: int)
 
 var _turn_label: RichTextLabel
 var _decision_label: RichTextLabel
@@ -126,14 +128,17 @@ func _process(_delta: float) -> void:
 	_help.position = Vector2(view.x - _help.size.x - 16, view.y - 28)
 
 
-## Redraws everything from the state. `selected_id` is the previewed model or -1.
+## Redraws everything from the state. `selected_id` is the previewed model
+## or -1; `attack_order` the attackers picked so far for a FREE_ATTACK_ORDER
+## decision; `charge_mode` whether the selected model is picking a charge target.
 func refresh(
-	state: GameState, selected_id: int, descent: Transitions.DescentMode = Transitions.DescentMode.DROP
+	state: GameState, selected_id: int, descent: Transitions.DescentMode = Transitions.DescentMode.DROP,
+	attack_order: Array[int] = [], charge_mode: bool = false
 ) -> void:
 	_descent_button.text = "Descent: %s (C)" % ("Climb down" if descent == Transitions.DescentMode.CLIMB_DOWN else "Drop")
 	refresh_status(state)
-	_refresh_prompt(state)
-	_refresh_model(state, selected_id)
+	_refresh_prompt(state, attack_order)
+	_refresh_model(state, selected_id, charge_mode)
 
 
 func show_message(text: String) -> void:
@@ -173,17 +178,37 @@ func refresh_status(state: GameState) -> void:
 		_decision_label.text = ""
 
 
-func _refresh_prompt(state: GameState) -> void:
+func _refresh_prompt(state: GameState, attack_order: Array[int] = []) -> void:
 	var pending: PendingDecision = state.pending
+	var order_prompt: bool = pending != null and pending.kind == PendingDecision.Kind.FREE_ATTACK_ORDER
 	var turn_prompt: bool = pending != null and (
 		pending.kind == PendingDecision.Kind.CHOOSE_FIRST_PLAYER or pending.kind == PendingDecision.Kind.ROLL_OFF
 	)
-	_prompt_panel.visible = turn_prompt
-	if not turn_prompt:
+	_prompt_panel.visible = turn_prompt or order_prompt
+	if not _prompt_panel.visible:
 		return
 	for child: Node in _prompt_buttons.get_children():
 		_prompt_buttons.remove_child(child)
 		child.queue_free()
+	if order_prompt:
+		var picked: PackedStringArray = PackedStringArray()
+		for id: int in attack_order:
+			picked.append("model %d" % id)
+		_prompt_label.text = "[center][b]Free attacks[/b]
+%s: %s
+%s[/center]" % [
+			UiStyle.player_bb(pending.player), pending.prompt,
+			"Order so far: %s. Who attacks next?" % ", ".join(picked) if not picked.is_empty() else "Who attacks first?"
+		]
+		for id: int in pending.model_ids:
+			if attack_order.has(id):
+				continue
+			var pick: Button = UiStyle.button("Model %d" % id, "Attacker%d" % id)
+			pick.add_theme_color_override("font_color", UiStyle.player_colour(pending.player))
+			pick.custom_minimum_size = Vector2(150, 38)
+			pick.pressed.connect(func() -> void: attacker_picked.emit(id))
+			_prompt_buttons.add_child(pick)
+		return
 	_prompt_label.text = "[center][b]Turn %d[/b]\n%s: %s[/center]" % [
 		state.turn.turn, UiStyle.player_bb(pending.player) if pending.player >= 0 else "Both players", pending.prompt
 	]
@@ -201,7 +226,7 @@ func _refresh_prompt(state: GameState) -> void:
 			_prompt_buttons.add_child(choose)
 
 
-func _refresh_model(state: GameState, selected_id: int) -> void:
+func _refresh_model(state: GameState, selected_id: int, charge_mode: bool = false) -> void:
 	var model: ModelState = state.get_model(selected_id)
 	_model_panel.visible = model != null
 	if model == null:
@@ -225,6 +250,19 @@ func _refresh_model(state: GameState, selected_id: int) -> void:
 		lines.append("[color=#%s]Down[/color] (stands up when it activates, then moves half)" % UiStyle.BAD_COLOUR.to_html(false))
 	elif t.active_model_id == model.id and t.stood_up:
 		lines.append("Stood up this activation: half movement")
+	var melee: Array[int] = MeleeZone.enemy_ids_within(state, model)
+	var retreating: bool = (
+		state.pending != null and state.pending.kind == PendingDecision.Kind.MOVE
+		and state.pending.model_id == model.id and state.pending.zones != null
+	)
+	if retreating:
+		lines.append("[color=#%s]Retreating[/color]: the move must end more than 1\" from every enemy." % UiStyle.GOLD_COLOUR.to_html(false))
+	elif not melee.is_empty():
+		lines.append("[color=#%s]In melee[/color] with %s: it cannot Move, Dash or Charge; it can only leave by Retreating." % [
+			UiStyle.GOLD_COLOUR.to_html(false), ", ".join(melee.map(func(id: int) -> String: return "model %d" % id))
+		])
+	if charge_mode:
+		lines.append("[color=#%s]Charge mode[/color]: click an enemy to charge it (G or Esc to leave)." % UiStyle.GOLD_COLOUR.to_html(false))
 	if not t.actions_used.is_empty() and t.active_model_id == model.id:
 		lines.append("Used: %s" % ", ".join(t.actions_used.map(func(id: StringName) -> String: return state.rules.action(id).label)))
 	_model_details.text = "\n".join(lines)
@@ -243,6 +281,11 @@ func _refresh_model(state: GameState, selected_id: int) -> void:
 			reason = BeginActionCommand.unavailable_reason(state, model, action.id)
 		button.disabled = reason != ""
 		button.tooltip_text = reason if reason != "" else "%s%s" % [action.label, " (risky)" if action.risky else ""]
+		var hotkey: String = {&"charge": " (G)", &"retreat": " (R)"}.get(action.id, "")
+		button.text = action.label + hotkey
+		if action.id == &"charge":
+			button.toggle_mode = true
+			button.set_pressed_no_signal(charge_mode)
 
 	var pending: PendingDecision = state.pending
 	var moving: bool = pending != null and pending.kind == PendingDecision.Kind.MOVE and pending.model_id == model.id

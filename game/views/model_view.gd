@@ -27,6 +27,8 @@ var _ring: MeshInstance3D
 var _tween: Tween
 var _label: Label3D
 var _selected: bool = false
+## Marked as one the hovered charge position would also charge (brief 007).
+var _highlighted: bool = false
 var _activated: bool = false
 var _down: bool = false
 ## Where the underside of the base is, and the up direction it is drawn
@@ -91,9 +93,15 @@ func set_selected(selected: bool) -> void:
 	_apply_look()
 
 
-## Shows the model's id, markers and Down state above it, and greys out a
-## model that has activated this turn.
-func show_status(model: ModelState, activated: bool, activating: bool) -> void:
+## Marks the model (a hovered charge position would charge it too).
+func set_highlighted(highlighted: bool) -> void:
+	_highlighted = highlighted
+	_apply_look()
+
+
+## Shows the model's id, markers and Down state above it (and "melee" when
+## it is in melee), and greys out a model that has activated this turn.
+func show_status(model: ModelState, activated: bool, activating: bool, in_melee: bool = false) -> void:
 	_activated = activated and not activating
 	var parts: PackedStringArray = PackedStringArray([str(model.id)])
 	var short_names: Dictionary[StringName, String] = {
@@ -104,6 +112,8 @@ func show_status(model: ModelState, activated: bool, activating: bool) -> void:
 			parts.append("%s%d" % [short_names.get(kind, String(kind)), model.marker_count(kind)])
 	if model.down:
 		parts.append("DOWN")
+	if in_melee:
+		parts.append("melee")
 	if _activated:
 		parts.append("done")
 	elif activating:
@@ -116,9 +126,13 @@ func show_status(model: ModelState, activated: bool, activating: bool) -> void:
 func _apply_look() -> void:
 	var base: Color = _colour.lerp(Color(0.35, 0.35, 0.35), 0.65) if _activated else _colour
 	_material.albedo_color = base
-	_material.emission_enabled = _selected
-	_material.emission = base.lerp(Color.WHITE, 0.6) if _selected else Color.BLACK
-	_material.emission_energy_multiplier = 0.35
+	_material.emission_enabled = _selected or _highlighted
+	if _highlighted:
+		_material.emission = Color(1.0, 0.75, 0.2)
+		_material.emission_energy_multiplier = 0.9
+	else:
+		_material.emission = base.lerp(Color.WHITE, 0.6) if _selected else Color.BLACK
+		_material.emission_energy_multiplier = 0.35
 
 
 ## Animates the view along `path` (positions of the base, start first, with

@@ -12,6 +12,13 @@ extends Node3D
 ## Escape cancels. C (or the HUD button): switch the selected model's descent
 ## mode between Drop and Climb down, which redraws its area. Escape:
 ## deselect. O: override panel.
+## G (or the Charge button): charge mode (brief 007). Every enemy in range is
+## labelled with what the charge needs; hovering one previews the charge
+## path; clicking it asks for confirmation, then the D6 rolls. If the charge
+## reaches with distance to spare, the places it may end are an arc around
+## the target's base: hover to see who else would be charged, click to pick
+## (Enter keeps first contact). R (or the Retreat button), in melee: lists
+## the free attacks, asks for confirmation, plays them, then the move.
 ## Ctrl+Z / Ctrl+Y: undo / redo (also HUD buttons).
 ## While the dice tumble, a click or a key skips to the result.
 
@@ -46,6 +53,27 @@ var _hover_override: Variant = null
 var _pinned: Variant = null
 var _confirm_panel: PanelContainer
 var _confirm_label: RichTextLabel
+## What the confirmation panel is asking about: &"move" (a pinned orange
+## move), &"charge" or &"retreat"; &"" when it is closed.
+var _confirming: StringName = &""
+## Melee links, enemy zones, charge labels and the contact arc.
+var _melee_view: MeleeView
+
+## Charge mode (brief 007): on while the selected model picks a target. The
+## plans (by declared target) are worked out on a worker thread.
+var _charge_mode: bool = false
+var _charge_plans: Dictionary[int, ChargePlan] = {}
+var _charge_task: int = -1
+var _built_plans: Dictionary[int, ChargePlan] = {}
+var _built_plans_ready: bool = false
+## The target the confirmation panel would charge.
+var _charge_target: int = -1
+## The contact position under the cursor (CHARGE_CONTACT), or -1.
+var _contact_hover: int = -1
+## The free attacks of the retreat being played, as tray lines.
+var _free_attack_lines: PackedStringArray = PackedStringArray()
+## FREE_ATTACK_ORDER: the attackers picked so far, in order.
+var _attack_order: Array[int] = []
 
 ## Events waiting to be played back, and whether one is playing (dice, a slide).
 var _queue: Array[GameEvent] = []
@@ -84,6 +112,7 @@ func _exit_tree() -> void:
 	if _reach_task != -1:
 		WorkerThreadPool.wait_for_task_completion(_reach_task)
 		_reach_task = -1
+	_wait_for_charge_task()
 
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -111,13 +140,21 @@ func _unhandled_input(event: InputEvent) -> void:
 		elif key.ctrl_pressed and key.physical_keycode == KEY_Y:
 			redo()
 		elif key.physical_keycode == KEY_ENTER or key.physical_keycode == KEY_KP_ENTER:
-			if _pinned != null:
-				confirm_pinned()
+			if _confirming != &"":
+				confirm()
+			elif _contact_pending():
+				choose_contact(state.pending.default_index)
 		elif key.physical_keycode == KEY_ESCAPE:
-			if _pinned != null:
-				cancel_pinned()
+			if _confirming != &"":
+				cancel_confirm()
+			elif _charge_mode:
+				exit_charge_mode()
 			else:
 				deselect()
+		elif key.physical_keycode == KEY_G and not key.ctrl_pressed:
+			toggle_charge_mode()
+		elif key.physical_keycode == KEY_R and not key.ctrl_pressed:
+			request_retreat()
 		elif key.physical_keycode == KEY_C and not key.ctrl_pressed:
 			toggle_descent_mode()
 		elif key.physical_keycode == KEY_O:
@@ -126,6 +163,7 @@ func _unhandled_input(event: InputEvent) -> void:
 
 func _process(_delta: float) -> void:
 	_collect_reach()
+	_collect_charges()
 	_update_hover()
 	var view: Vector2 = get_viewport().get_visible_rect().size
 	_tray.size.y = 0.0
@@ -157,6 +195,8 @@ func is_busy() -> bool:
 
 ## Selects a model to preview it: its panel, and where Move would take it.
 func select_model(id: int) -> void:
+	if _charge_mode and id != _selected_id:
+		exit_charge_mode()
 	if _selected_id != -1 and _views.has(_selected_id):
 		_views[_selected_id].set_selected(false)
 	_selected_id = id
@@ -165,6 +205,8 @@ func select_model(id: int) -> void:
 
 
 func deselect() -> void:
+	if _charge_mode:
+		exit_charge_mode()
 	if _selected_id != -1 and _views.has(_selected_id):
 		_views[_selected_id].set_selected(false)
 	_selected_id = -1
@@ -210,21 +252,63 @@ func cancel_pinned() -> void:
 	_hud.show_message("Move cancelled.")
 
 
+## What the confirmation panel asks about, done (Confirm or Enter).
+func confirm() -> String:
+	match _confirming:
+		&"move":
+			return confirm_pinned()
+		&"charge":
+			return confirm_charge()
+		&"retreat":
+			return confirm_retreat()
+	return "Nothing to confirm."
+
+
+## Closes the confirmation panel without doing it (Cancel or Escape).
+func cancel_confirm() -> void:
+	match _confirming:
+		&"move":
+			cancel_pinned()
+		&"charge":
+			_close_confirm()
+			_charge_target = -1
+			_hud.show_message("Charge not declared. Pick another target, or Esc to leave charge mode.")
+		&"retreat":
+			_close_confirm()
+			_hud.show_message("Retreat cancelled.")
+
+
+## The confirmation panel's question, or "" when it is closed (for scripted checks).
+func confirm_text() -> String:
+	return _confirm_label.get_parsed_text() if _confirming != &"" else ""
+
+
+func _ask_confirm(kind: StringName, text: String) -> void:
+	_confirming = kind
+	_confirm_label.text = text
+	_confirm_panel.visible = true
+
+
+func _close_confirm() -> void:
+	_confirming = &""
+	if _confirm_panel != null:
+		_confirm_panel.visible = false
+
+
 func _pin(point: Vector3) -> void:
 	_pinned = point
 	var labels: PackedStringArray = PackedStringArray()
 	for roll: Dictionary in _reach.rolls_to(point):
 		labels.append(String(roll["label"]))
-	_confirm_label.text = "[b]This move needs rolls[/b]\n%s\n%.1f\" of %.1f\"" % [
+	_ask_confirm(&"move", "[b]This move needs rolls[/b]\n%s\n%.1f\" of %.1f\"" % [
 		"  -  ".join(labels), _reach.cost_to(point), _reach.budget
-	]
-	_confirm_panel.visible = true
+	])
 
 
 func _unpin() -> void:
 	_pinned = null
-	if _confirm_panel != null:
-		_confirm_panel.visible = false
+	if _confirming == &"move":
+		_close_confirm()
 
 
 ## Moves the selected model to `point` along the reach field's path: answers
@@ -245,11 +329,224 @@ func move_selected_to(point: Vector3) -> String:
 
 
 ## Takes an action with the selected model (the HUD's action buttons).
+## Charge opens charge mode and Retreat asks for confirmation first.
 func take_action(action_id: StringName) -> String:
 	var model: ModelState = state.get_model(_selected_id)
 	if model == null or is_busy():
 		return "No model selected."
+	if action_id == &"charge":
+		return toggle_charge_mode()
+	if action_id == &"retreat":
+		return request_retreat()
 	return send(BeginActionCommand.new(model.player, model.id, action_id))
+
+
+## Why the selected model may not take `action_id` now, or "".
+func _action_error(action_id: StringName) -> String:
+	var model: ModelState = state.get_model(_selected_id)
+	if model == null:
+		return "No model selected."
+	var error: String = TurnFlow.activation_error(state, model.player, model)
+	if error == "":
+		error = BeginActionCommand.unavailable_reason(state, model, action_id)
+	return error
+
+
+func is_charge_mode() -> bool:
+	return _charge_mode
+
+
+## Whether charge mode has worked out its plans.
+func is_charge_ready() -> bool:
+	return _charge_mode and _charge_task == -1
+
+
+func charge_plans() -> Dictionary[int, ChargePlan]:
+	return _charge_plans
+
+
+func toggle_charge_mode() -> String:
+	if _charge_mode:
+		exit_charge_mode()
+		return ""
+	return enter_charge_mode()
+
+
+## Charge mode for the selected model: works out the charge against every
+## enemy in range on a worker thread, then labels them.
+func enter_charge_mode() -> String:
+	if is_busy():
+		return "Wait for the move to finish."
+	var error: String = _action_error(&"charge")
+	if error != "":
+		_hud.show_message("[color=#%s]Charge: %s[/color]" % [UiStyle.BAD_COLOUR.to_html(false), error])
+		return error
+	_unpin()
+	_charge_mode = true
+	_charge_plans = {}
+	_charge_target = -1
+	_clear_reach()
+	_wait_for_charge_task()
+	_built_plans_ready = false
+	# The height field is shared; build it here so the worker only reads it.
+	state.height_field()
+	_charge_task = WorkerThreadPool.add_task(_build_charges.bind(_selected_id))
+	_hud.show_message("Charge mode: working out the charges…")
+	_refresh_all()
+	return ""
+
+
+func exit_charge_mode() -> void:
+	if not _charge_mode:
+		return
+	_charge_mode = false
+	_wait_for_charge_task()
+	_charge_plans = {}
+	_charge_target = -1
+	if _confirming == &"charge":
+		_close_confirm()
+	_melee_view.clear_charge_labels()
+	_preview.hide_all()
+	_distance_label.visible = false
+	_hud.show_message("")
+	_refresh_all()
+
+
+## On a worker thread: only reads the state, which cannot change while
+## charge mode is working (nothing is sent until it is ready).
+func _build_charges(charger_id: int) -> void:
+	var planner: ChargePlanner = ChargePlanner.new(state, charger_id)
+	var plans: Dictionary[int, ChargePlan] = {}
+	for target: ModelState in planner.candidates():
+		plans[target.id] = planner.plan(target.id)
+	_built_mutex.lock()
+	_built_plans = plans
+	_built_plans_ready = true
+	_built_mutex.unlock()
+
+
+func _collect_charges() -> void:
+	if _charge_task == -1 or not WorkerThreadPool.is_task_completed(_charge_task):
+		return
+	WorkerThreadPool.wait_for_task_completion(_charge_task)
+	_charge_task = -1
+	_built_mutex.lock()
+	var plans: Dictionary[int, ChargePlan] = _built_plans
+	_built_plans = {}
+	_built_mutex.unlock()
+	if not _charge_mode:
+		return
+	_charge_plans = plans
+	_melee_view.show_charge_labels(state, plans)
+	var reachable: int = 0
+	for plan: ChargePlan in plans.values():
+		if plan.reachable():
+			reachable += 1
+	_hud.show_message("Charge mode: %d enemies in range, %d reachable. Hover one to see the path, click to charge. Esc leaves." % [
+		plans.size(), reachable
+	])
+
+
+func _wait_for_charge_task() -> void:
+	if _charge_task != -1:
+		WorkerThreadPool.wait_for_task_completion(_charge_task)
+		_charge_task = -1
+		_built_plans = {}
+
+
+## Charge mode: clicking an enemy asks to confirm the charge against it.
+func request_charge(target_id: int) -> String:
+	if not _charge_mode or _charge_task != -1:
+		return "Not in charge mode."
+	if not _charge_plans.has(target_id):
+		_hud.show_message("Model %d cannot be charged: it is not an enemy within 12\" that the charger can see." % target_id)
+		return "Not a target."
+	var plan: ChargePlan = _charge_plans[target_id]
+	if not plan.reachable():
+		_hud.show_message("[color=#%s]%s[/color]" % [UiStyle.BAD_COLOUR.to_html(false), plan.error])
+		return plan.error
+	_charge_target = target_id
+	var lines: PackedStringArray = PackedStringArray()
+	lines.append("[b]Charge model %d?[/b]" % target_id)
+	if plan.interposed():
+		lines.append("[color=#%s]Model %d is in the way: the charge is against model %d instead.[/color]" % [
+			UiStyle.GOLD_COLOUR.to_html(false), plan.interposers[0], plan.target_id
+		])
+	var model: ModelState = state.get_model(_selected_id)
+	lines.append("%.1f\" to base contact; Movement %s\" + D6 (%s)." % [plan.length, str(model.movement), plan.label()])
+	lines.append("The D6 is rolled once it is declared; the declaration stands whatever the roll.")
+	_ask_confirm(&"charge", "\n".join(lines))
+	return ""
+
+
+## Declares the charge waiting for confirmation: the D6 rolls in the tray.
+func confirm_charge() -> String:
+	if _charge_target == -1:
+		return "No charge to confirm."
+	var model: ModelState = state.get_model(_selected_id)
+	var target: int = _charge_target
+	_close_confirm()
+	exit_charge_mode()
+	return send(BeginActionCommand.new(model.player, model.id, &"charge", target))
+
+
+func _contact_pending() -> bool:
+	return state.pending != null and state.pending.kind == PendingDecision.Kind.CHARGE_CONTACT
+
+
+## Answers the contact choice: the charger ends at position `index`.
+func choose_contact(index: int) -> String:
+	if not _contact_pending():
+		return "No contact to choose."
+	return send(ChooseContactCommand.new(state.pending.player, index))
+
+
+## Retreat (R or the button): lists the free attacks and asks to confirm.
+func request_retreat() -> String:
+	if is_busy():
+		return "Wait for the move to finish."
+	var error: String = _action_error(&"retreat")
+	if error != "":
+		_hud.show_message("[color=#%s]Retreat: %s[/color]" % [UiStyle.BAD_COLOUR.to_html(false), error])
+		return error
+	var model: ModelState = state.get_model(_selected_id)
+	var enemies: Array[int] = MeleeZone.enemy_ids_within(state, model)
+	var names: PackedStringArray = PackedStringArray()
+	for id: int in enemies:
+		names.append("model %d" % id)
+	var lines: PackedStringArray = PackedStringArray()
+	lines.append("[b]Retreat model %d?[/b]" % model.id)
+	lines.append("Free attacks first: %s%s." % [
+		", ".join(names), " (%s picks the order)" % UiStyle.player_bb(1 - model.player) if enemies.size() > 1 else ""
+	])
+	lines.append("Then it moves up to %.1f\" and must end more than 1\" from every enemy." % TurnFlow.movement_budget(state, model))
+	_ask_confirm(&"retreat", "\n".join(lines))
+	return ""
+
+
+func confirm_retreat() -> String:
+	_close_confirm()
+	var model: ModelState = state.get_model(_selected_id)
+	if model == null:
+		return "No model selected."
+	return send(BeginActionCommand.new(model.player, model.id, &"retreat"))
+
+
+## FREE_ATTACK_ORDER: the enemy player picks the next attacker; once every
+## attacker is picked the order is sent.
+func pick_attacker(attacker_id: int) -> String:
+	var pending: PendingDecision = state.pending
+	if pending == null or pending.kind != PendingDecision.Kind.FREE_ATTACK_ORDER:
+		return "No order to pick."
+	if _attack_order.has(attacker_id) or not pending.model_ids.has(attacker_id):
+		return "Not an attacker left to pick."
+	_attack_order.append(attacker_id)
+	if _attack_order.size() < pending.model_ids.size():
+		_refresh_all()
+		return ""
+	var order: Array[int] = _attack_order.duplicate()
+	_attack_order.clear()
+	return send(ChooseAttackOrderCommand.new(pending.player, order))
 
 
 func end_activation() -> String:
@@ -320,6 +617,9 @@ func redo() -> String:
 
 func _after_restore(message: String) -> void:
 	_unpin()
+	_close_confirm()
+	exit_charge_mode()
+	_attack_order.clear()
 	_clear_reach()
 	_tray.close()
 	# A restored roll waiting on a marker prompt shows it again.
@@ -364,6 +664,7 @@ static func _descent_name(mode: Transitions.DescentMode) -> String:
 ## shows what core waits for now (even while events still play back).
 func _state_changed() -> void:
 	_reach_cache.clear()
+	_attack_order.clear()
 	_hud.refresh_status(state)
 
 
@@ -469,6 +770,39 @@ func _play(event: GameEvent) -> void:
 				])
 		GameEvent.Kind.OVERRIDE_APPLIED:
 			_hud.show_message("Override: %s" % event.data.get("text", ""))
+		GameEvent.Kind.CHARGE_DECLARED:
+			var text: String = "Model %d charges model %d." % [event.model_id, int(event.data["target_id"])]
+			if event.data.get("interposed", false):
+				text = "Model %d charges model %d (in the way of model %d)." % [
+					event.model_id, int(event.data["target_id"]), int(event.data["declared_id"])
+				]
+			_hud.show_message(text)
+		GameEvent.Kind.CHARGE_DISTANCE:
+			var reaches: bool = event.data["reaches"]
+			_tray.show_effect("%s %.1f\" of %.1f\" needed" % [
+				"Charge reaches:" if reaches else "Charge falls short:", float(event.data["distance"]), float(event.data["length"])
+			])
+		GameEvent.Kind.CHARGE_FAILED:
+			_tray.show_effect("Charge failed: %.1f\" of %.1f\"" % [float(event.data["distance"]), float(event.data["length"])])
+			_hud.show_message("Model %d's charge falls short; it stops outside every enemy's 1\" zone." % event.model_id)
+		GameEvent.Kind.CHARGED:
+			var charged: Array = event.data["charged"]
+			_hud.show_message("Model %d is in melee: charged %s." % [
+				event.model_id, ", ".join(charged.map(func(id: int) -> String: return "model %d" % id))
+			])
+		GameEvent.Kind.RETREAT_STARTED:
+			_free_attack_lines.clear()
+			_hud.show_message("Model %d retreats." % event.model_id)
+		GameEvent.Kind.FREE_ATTACK:
+			_free_attack_lines.append("Model %d makes a free melee attack against model %d." % [
+				event.model_id, int(event.data["target_id"])
+			])
+			var lines: PackedStringArray = _free_attack_lines.duplicate()
+			if event.data.get("temporary", false):
+				lines.append("[color=#%s](Temporary: attacks are not in the game yet.)[/color]" % UiStyle.DIM_COLOUR.to_html(false))
+			_tray.show_notes("Free attacks", lines)
+			_playing = true
+			get_tree().create_timer(0.7).timeout.connect(_resume)
 		GameEvent.Kind.PLAYER_TO_ACT:
 			pass
 
@@ -480,6 +814,12 @@ func _on_decision(decision: PendingDecision) -> void:
 		PendingDecision.Kind.MOVE:
 			if _selected_id != decision.model_id:
 				select_model(decision.model_id)
+		PendingDecision.Kind.CHARGE_CONTACT:
+			if _selected_id != decision.model_id:
+				select_model(decision.model_id)
+			_hud.show_message("Click a spot on the arc to end the charge there (Enter keeps first contact).")
+		PendingDecision.Kind.FREE_ATTACK_ORDER:
+			_attack_order.clear()
 
 
 func _play_move(event: GameEvent) -> void:
@@ -548,10 +888,25 @@ func _refresh_all() -> void:
 	for model: ModelState in state.models:
 		var view: ModelView = _views[model.id]
 		view.sync(model)
-		view.show_status(model, state.turn.has_activated(model.id), state.turn.active_model_id == model.id)
-	_hud.refresh(state, _selected_id, descent_mode())
+		view.show_status(model, state.turn.has_activated(model.id), state.turn.active_model_id == model.id, MeleeZone.in_melee(state, model))
+	_hud.refresh(state, _selected_id, descent_mode(), _attack_order, _charge_mode)
 	_overrides.refresh(state, _selected_id)
 	_refresh_reach()
+	_refresh_melee()
+
+
+## Melee links, enemy zones while a model is selected to move or charge, and
+## the contact arc while a contact is to be chosen.
+func _refresh_melee() -> void:
+	_melee_view.show_links(state)
+	var selected: ModelState = state.get_model(_selected_id)
+	var moving: bool = selected != null and (_reach_key != "" or _charge_mode or _contact_pending())
+	_melee_view.show_zones(state, selected if moving else null)
+	if _contact_pending():
+		_melee_view.show_contact_arc(state.pending.positions)
+	else:
+		_melee_view.clear_contact_arc()
+		_set_contact_hover(-1)
 
 
 func _move_pending_for(id: int) -> bool:
@@ -575,13 +930,14 @@ func _move_budget(id: int) -> float:
 
 
 func _refresh_reach() -> void:
-	var budget: float = _move_budget(_selected_id) if _selected_id != -1 else -1.0
+	var budget: float = _move_budget(_selected_id) if _selected_id != -1 and not _charge_mode else -1.0
 	if budget < 0.0:
 		_clear_reach()
 		return
 	var model: ModelState = state.get_model(_selected_id)
 	var mode: Transitions.DescentMode = descent_mode()
-	var key: String = "%d|%.3f|%s|%d" % [_selected_id, budget, str(model.position), mode]
+	var zones: EnemyZones = state.pending.zones if _move_pending_for(_selected_id) else null
+	var key: String = "%d|%.3f|%s|%d|%s" % [_selected_id, budget, str(model.position), mode, zones.describe() if zones != null else ""]
 	if key == _reach_key:
 		return
 	_clear_reach()
@@ -601,7 +957,7 @@ func _refresh_reach() -> void:
 	state.height_field()
 	_reach_task_key = key
 	_reach_started_usec = Time.get_ticks_usec()
-	_reach_task = WorkerThreadPool.add_task(_build_reach.bind(_selected_id, budget, mode))
+	_reach_task = WorkerThreadPool.add_task(_build_reach.bind(_selected_id, budget, mode, zones))
 
 
 func _clear_reach() -> void:
@@ -615,8 +971,8 @@ func _clear_reach() -> void:
 
 ## On a worker thread: only reads positions and terrain, which do not change
 ## while a field is being built (nothing can move without one).
-func _build_reach(id: int, budget: float, mode: Transitions.DescentMode) -> void:
-	var field: ReachField = ReachField.new(state, id, budget, ReachField.CELL_SIZE, mode)
+func _build_reach(id: int, budget: float, mode: Transitions.DescentMode, zones: EnemyZones = null) -> void:
+	var field: ReachField = ReachField.new(state, id, budget, ReachField.CELL_SIZE, mode, zones)
 	var layers: Array[ReachField.Layer] = field.contour_layers()
 	_built_mutex.lock()
 	_built_field = field
@@ -648,6 +1004,22 @@ func _collect_reach() -> void:
 
 func _on_left_click(screen_position: Vector2) -> void:
 	var picked: int = _pick_model(screen_position)
+	if _charge_mode:
+		if picked != -1 and state.get_model(picked).player != state.get_model(_selected_id).player:
+			request_charge(picked)
+		elif picked == _selected_id:
+			pass
+		else:
+			exit_charge_mode()
+			if picked != -1:
+				select_model(picked)
+		return
+	if _contact_pending():
+		if _contact_hover != -1:
+			choose_contact(_contact_hover)
+		else:
+			_hud.show_message("Click a spot on the arc around the target (Enter keeps first contact).")
+		return
 	if picked != -1:
 		select_model(picked)
 		return
@@ -666,7 +1038,15 @@ func _on_left_click(screen_position: Vector2) -> void:
 
 
 func _update_hover() -> void:
-	if _selected_id == -1 or _reach == null or is_busy():
+	if _selected_id == -1 or is_busy():
+		return
+	if _charge_mode:
+		_update_charge_hover()
+		return
+	if _contact_pending():
+		_update_contact_hover()
+		return
+	if _reach == null:
 		return
 	var point: Variant = _hover_override
 	if _pinned != null:
@@ -718,6 +1098,113 @@ func _update_hover() -> void:
 			_distance_label.text += "   (click to confirm)"
 	_distance_label.position = _camera.unproject_position(target) + Vector2(18, -34)
 	_distance_label.visible = true
+
+
+## Charge mode: the charge path to the enemy under the cursor (or the
+## scripted hover point), with what it needs.
+func _update_charge_hover() -> void:
+	var target: int = -1
+	if _confirming == &"charge":
+		target = _charge_target
+	elif _hover_override != null:
+		target = _model_near(_hover_override)
+	else:
+		var mouse: Vector2 = get_viewport().get_mouse_position()
+		if not _over_ui(mouse):
+			target = _pick_model(mouse)
+	if target == -1 or not _charge_plans.has(target):
+		_preview.hide_all()
+		_distance_label.visible = false
+		return
+	var plan: ChargePlan = _charge_plans[target]
+	var model: ModelState = state.get_model(_selected_id)
+	if not plan.reachable():
+		_preview.hide_all()
+		_distance_label.text = "Model %d: %s" % [target, plan.label()]
+	else:
+		var shown: Array[Vector3] = _charge_display_path(model, plan.path)
+		shown.remove_at(0)
+		_preview.show_preview(model.position, shown, plan.contact(), model.base_radius_inches(), Vector3.UP, not plan.is_certain())
+		_preview.show_roll_points([] as Array[Vector3])
+		var text: String = "Charge model %d: %.1f\" - %s" % [target, plan.length, plan.label()]
+		if plan.interposed():
+			text = "Model %d is in the way of model %d: charges it instead\n%.1f\" - %s" % [plan.interposers[0], target, plan.length, plan.label()]
+		_distance_label.text = text
+	_distance_label.position = _camera.unproject_position(state.get_model(target).position) + Vector2(18, -60)
+	_distance_label.visible = true
+
+
+## A charge path as drawn: climbs straight up and down (see _shown_path()).
+func _charge_display_path(model: ModelState, path: Array[Vector3]) -> Array[Vector3]:
+	var legality: MoveLegality = ChargePlanner.legality_for(state, model)
+	var points: Array[Vector3] = [model.position]
+	points.append_array(path)
+	var kinds: Array = []
+	for i: int in range(1, points.size()):
+		legality.segment_cost(points[i - 1], points[i])
+		kinds.append(legality.last_kind)
+	return _shown_path(points, kinds)
+
+
+## The contact choice: the arc position nearest the cursor, the base it
+## would have there, and the enemies it would count as charging.
+func _update_contact_hover() -> void:
+	var decision: PendingDecision = state.pending
+	var point: Variant = _hover_override
+	if point == null:
+		var mouse: Vector2 = get_viewport().get_mouse_position()
+		point = null if _over_ui(mouse) else _floor_point(mouse)
+	var best: int = -1
+	if point != null:
+		var at: Vector3 = point
+		var best_distance: float = 0.8
+		for i: int in decision.positions.size():
+			var d: float = Vector2(at.x, at.z).distance_to(Vector2(decision.positions[i].x, decision.positions[i].z))
+			if d < best_distance:
+				best_distance = d
+				best = i
+	_set_contact_hover(best)
+
+
+func _set_contact_hover(index: int) -> void:
+	if index == _contact_hover:
+		return
+	_contact_hover = index
+	for view: ModelView in _views.values():
+		view.set_highlighted(false)
+	if index == -1 or not _contact_pending():
+		_melee_view.show_contact_hover(null, 0.0)
+		_distance_label.visible = false
+		return
+	var decision: PendingDecision = state.pending
+	var model: ModelState = state.get_model(decision.model_id)
+	_melee_view.show_contact_hover(decision.positions[index], model.base_radius_inches())
+	var charged: Array = decision.charged_ids[index]
+	for id: int in charged:
+		_views[id].set_highlighted(true)
+	_distance_label.text = "Ends here: charges %s%s" % [
+		", ".join(charged.map(func(id: int) -> String: return "model %d" % id)),
+		"  (first contact)" if index == decision.default_index else ""
+	]
+	_distance_label.position = _camera.unproject_position(decision.positions[index]) + Vector2(18, -34)
+	_distance_label.visible = true
+
+
+## The contact position under the cursor, or -1 (for scripted checks).
+func contact_hover() -> int:
+	return _contact_hover
+
+
+## The model whose base is nearest a table point (within 2"), or -1.
+func _model_near(point: Vector3) -> int:
+	var best: int = -1
+	var best_distance: float = 2.0
+	for model: ModelState in state.models_on_table():
+		var d: float = Vector2(point.x, point.z).distance_to(Vector2(model.position.x, model.position.z))
+		if d < best_distance:
+			best_distance = d
+			best = model.id
+	return best
 
 
 func _over_ui(screen_position: Vector2) -> bool:
@@ -836,6 +1323,8 @@ func _build_overlays() -> void:
 	add_child(_indicator)
 	_preview = PathPreview.new()
 	add_child(_preview)
+	_melee_view = MeleeView.new()
+	add_child(_melee_view)
 
 	var layer: CanvasLayer = CanvasLayer.new()
 	layer.name = "Ui"
@@ -860,6 +1349,7 @@ func _build_overlays() -> void:
 	_hud.undo_pressed.connect(func() -> void: undo())
 	_hud.redo_pressed.connect(func() -> void: redo())
 	_hud.descent_pressed.connect(func() -> void: toggle_descent_mode())
+	_hud.attacker_picked.connect(func(id: int) -> void: pick_attacker(id))
 
 	_tray = DiceTray.new()
 	_tray.custom_minimum_size = Vector2(TRAY_WIDTH, 0)
@@ -878,10 +1368,10 @@ func _build_overlays() -> void:
 	confirm_row.add_theme_constant_override("separation", 8)
 	confirm_box.add_child(confirm_row)
 	var confirm: Button = UiStyle.button("Confirm (Enter)", "ConfirmMoveButton")
-	confirm.pressed.connect(func() -> void: confirm_pinned())
+	confirm.pressed.connect(func() -> void: confirm())
 	confirm_row.add_child(confirm)
 	var cancel: Button = UiStyle.button("Cancel (Esc)", "CancelMoveButton")
-	cancel.pressed.connect(func() -> void: cancel_pinned())
+	cancel.pressed.connect(func() -> void: cancel_confirm())
 	confirm_row.add_child(cancel)
 	_confirm_panel.visible = false
 	layer.add_child(_confirm_panel)
