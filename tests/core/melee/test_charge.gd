@@ -77,6 +77,8 @@ func test_range_ignores_terrain_and_is_measured_between_the_cylinders() -> void:
 	# A wall in the way does not count; the range is a straight line.
 	_piece(Vector2(24, 30), Vector3(8, 3, 0.5), TerrainPiece.Tag.IMPASSABLE)
 	var behind: int = _place(1, Vector3(24, 0, 24 + 11 + 2 * R32))
+	# Only range is under test here: the wall would also hide it.
+	state.rules.sight = AlwaysSight.new()
 	var planner: ChargePlanner = ChargePlanner.new(state, a)
 	assert_eq(planner.target_error(state.get_model(behind)), "", "in range through the wall")
 
@@ -84,10 +86,60 @@ func test_range_ignores_terrain_and_is_measured_between_the_cylinders() -> void:
 func test_sight_goes_through_the_interface() -> void:
 	var a: int = _place(0, Vector3(24, 0, 24))
 	var b: int = _place(1, Vector3(24, 0, 30))
-	assert_true(state.rules.sight is TemporarySight, "the temporary implementation is in place")
+	assert_true(state.rules.sight is LineOfSight, "real line of sight is in place")
+	assert_eq(ChargePlanner.new(state, a).target_error(state.get_model(b)), "", "seen in the open")
 	state.rules.sight = Sight.new()
 	assert_string_contains(ChargePlanner.new(state, a).target_error(state.get_model(b)), "cannot see")
 
+
+func test_an_unseen_enemy_in_range_cannot_be_charged() -> void:
+	var a: int = _place(0, Vector3(24, 0, 24))
+	var hidden: int = _place(1, Vector3(24, 0, 30))
+	var far_hidden: int = _place(1, Vector3(24, 0, 40))
+	_piece(Vector2(24, 27), Vector3(8, 3, 0.5))
+	var planner: ChargePlanner = ChargePlanner.new(state, a)
+	assert_true(planner.candidates().is_empty(), "neither is a target")
+	assert_string_contains(planner.target_error(state.get_model(hidden)), "cannot see model %d" % hidden)
+	assert_true(planner.not_visible(state.get_model(hidden)), "in range but not seen")
+	assert_false(planner.not_visible(state.get_model(far_hidden)), "too far is told first")
+	var in_range: Array[int] = []
+	for model: ModelState in planner.in_range():
+		in_range.append(model.id)
+	assert_eq(in_range, [hidden] as Array[int], "what charge mode labels")
+	var plan: ChargePlan = planner.plan(hidden)
+	assert_true(plan.not_visible)
+	assert_eq(plan.label(), "not visible")
+	assert_false(plan.reachable())
+	TurnHelper.ready_to_act(state, a)
+	var error: String = state.execute(BeginActionCommand.new(0, a, &"charge", hidden))
+	assert_string_contains(error, "cannot see", "the declaration is refused with the reason")
+
+
+## Sees everything except the models listed.
+class HidingSight:
+	extends Sight
+	var hidden: Array[int] = []
+
+	func check(_state: GameState, viewer: ModelState, target: ModelState) -> SightResult:
+		if hidden.has(target.id):
+			return SightResult.blocked()
+		return SightResult.clear(viewer.position, target.position)
+
+
+func test_an_interposer_needs_no_sight() -> void:
+	# The model in the way stands on the straight line to the target.
+	var charger: int = _place(0, Vector3(30, 0, 24))
+	var target: int = _place(1, Vector3(20.5, 0, 24))
+	var interposer: int = _place(1, Vector3(25, 0, 24.7))
+	var sight: HidingSight = HidingSight.new()
+	sight.hidden = [interposer]
+	state.rules.sight = sight
+	var planner: ChargePlanner = ChargePlanner.new(state, charger)
+	assert_false(state.rules.sight.can_see(state, state.get_model(charger), state.get_model(interposer)), "the interposer is not seen")
+	var plan: ChargePlan = planner.plan(target)
+	assert_eq(plan.error, "", "the declared target is seen and in range")
+	assert_eq(plan.target_id, interposer, "the unseen model in the way becomes the target")
+	assert_eq(planner.plan(interposer).not_visible, true, "it could not have been declared itself")
 
 func test_needed_roll_for_near_far_and_impossible_targets() -> void:
 	var a: int = _place(0, Vector3(24, 0, 24))

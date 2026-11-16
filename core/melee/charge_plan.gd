@@ -24,6 +24,9 @@ var length: float = INF
 ## The smallest D6 result that reaches: 0 if the Movement characteristic alone
 ## does, 1 to 6, or OUT_OF_REACH.
 var needed: int = OUT_OF_REACH
+## The declared target is in range but the charger cannot see it (brief 008):
+## it cannot be charged.
+var not_visible: bool = false
 
 
 func interposed() -> bool:
@@ -45,8 +48,10 @@ func contact() -> Vector3:
 	return path[path.size() - 1] if not path.is_empty() else Vector3.INF
 
 
-## "certain", "needs 3+" or "out of reach", for the UI.
+## "certain", "needs 3+", "out of reach" or "not visible", for the UI.
 func label() -> String:
+	if not_visible:
+		return "not visible"
 	if not reachable():
 		return "out of reach"
 	if is_certain():

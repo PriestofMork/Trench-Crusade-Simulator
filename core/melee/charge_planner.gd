@@ -2,9 +2,9 @@ class_name ChargePlanner
 extends RefCounted
 ## Works out charges for one charger (docs/rules/movement.md, "Charge";
 ## rulings of brief 007):
-## - targets (ruling 11, 12): enemy models on the table that the charger can
-##   see (GameState.rules.sight) and that are within 12", edge to edge in a
-##   straight line between the cylinders, ignoring terrain;
+## - targets (ruling 11, 12): enemy models on the table that are within 12",
+##   edge to edge in a straight line between the cylinders, ignoring
+##   terrain, and that the charger can see (GameState.rules.sight; brief 008);
 ## - the charge path (ruling 3): the shortest legal path to base contact,
 ##   with every enemy 1" zone open (bases still block) and no rolls on the way
 ##   (ruling 5: walks, open climbs, ladders, low obstacles and drops under 3");
@@ -13,7 +13,9 @@ extends RefCounted
 ##   below the target's, somewhere it can stop;
 ## - interposing (ruling 4): if the path comes within 1" of another enemy
 ##   before it comes within 1" of the target, that model is charged instead
-##   and the path is worked out again to it;
+##   and the path is worked out again to it. The model in the way needs
+##   neither sight nor range (ruling 10 of brief 008): only the declared
+##   target does;
 ## - the D6 needed (ruling 2): the smallest result whose Movement + D6,
 ##   halved as a whole after standing up, covers the path.
 ##
@@ -32,6 +34,8 @@ const REFINE_STEPS: int = 6
 ## Spacing of the points checked along a path for interposing models.
 const PATH_STEP: float = 0.05
 const EPSILON: float = 0.0001
+## The reason given for an enemy in range the charger cannot see.
+const NOT_VISIBLE_ERROR: String = "The charger cannot see model %d."
 
 var state: GameState
 var charger: ModelState
@@ -76,7 +80,9 @@ func field() -> ReachField:
 
 
 ## Why `target` cannot be declared as the target before any path is looked
-## at (not an enemy, not seen, too far), or "".
+## at (not an enemy, too far, not seen), or "". Range is checked before
+## sight, so an enemy in range that cannot be seen is told apart
+## (not_visible()).
 func target_error(target: ModelState) -> String:
 	if target == null:
 		return "No such model to charge."
@@ -86,11 +92,27 @@ func target_error(target: ModelState) -> String:
 		return "Only an enemy model can be charged."
 	if not target.on_table():
 		return "Model %d is Out of Action." % target.id
-	if not state.rules.sight.can_see(state, charger, target):
-		return "The charger cannot see model %d." % target.id
 	if MeleeZone.gap(charger, target) > RANGE_INCHES + EPSILON:
 		return "Model %d is more than %d\" away." % [target.id, int(RANGE_INCHES)]
+	if not state.rules.sight.can_see(state, charger, target):
+		return NOT_VISIBLE_ERROR % target.id
 	return ""
+
+
+## Whether `target` is an enemy in range that the charger cannot see.
+func not_visible(target: ModelState) -> bool:
+	return target != null and target_error(target) == NOT_VISIBLE_ERROR % target.id
+
+
+## Enemy models on the table within 12", seen or not: what charge mode labels.
+func in_range() -> Array[ModelState]:
+	var result: Array[ModelState] = []
+	if charger == null or not charger.on_table():
+		return result
+	for other: ModelState in state.models:
+		if other.player != charger.player and other.on_table() and MeleeZone.gap(charger, other) <= RANGE_INCHES + EPSILON:
+			result.append(other)
+	return result
 
 
 ## The models the charger may declare a charge against (whatever the path).
@@ -111,6 +133,7 @@ func plan(target_id: int) -> ChargePlan:
 	result.target_id = target_id
 	result.error = target_error(state.get_model(target_id))
 	if result.error != "":
+		result.not_visible = not_visible(state.get_model(target_id))
 		return result
 	var visited: Dictionary[int, bool] = {}
 	var current: int = target_id
