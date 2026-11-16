@@ -25,6 +25,11 @@ func setup(piece: TerrainPiece) -> void:
 	rotation = Vector3(0.0, piece.rotation, 0.0)
 	var material: StandardMaterial3D = StandardMaterial3D.new()
 	material.albedo_color = colour_for(piece)
+	if not piece.blocks_sight:
+		# See-through for sight (brief 008): drawn see-through too.
+		material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		material.albedo_color.a = 0.35
+		material.cull_mode = BaseMaterial3D.CULL_DISABLED
 	material_override = material
 
 

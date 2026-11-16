@@ -14,6 +14,8 @@ signal redo_pressed
 signal descent_pressed
 ## FREE_ATTACK_ORDER: the enemy player picked the next attacker.
 signal attacker_picked(attacker_id: int)
+signal sight_overview_pressed
+signal sight_debug_pressed
 
 var _turn_label: RichTextLabel
 var _decision_label: RichTextLabel
@@ -32,6 +34,8 @@ var _action_buttons: Dictionary[StringName, Button] = {}
 var _undo_button: Button
 var _descent_button: Button
 var _redo_button: Button
+var _sight_overview_button: Button
+var _sight_debug_button: Button
 
 
 func _init() -> void:
@@ -60,6 +64,19 @@ func _init() -> void:
 	_redo_button = UiStyle.button("Redo (Ctrl+Y)", "RedoButton")
 	_redo_button.pressed.connect(func() -> void: redo_pressed.emit())
 	history_row.add_child(_redo_button)
+	var sight_row: HBoxContainer = HBoxContainer.new()
+	sight_row.add_theme_constant_override("separation", 6)
+	status_box.add_child(sight_row)
+	_sight_overview_button = UiStyle.button("Sight overview (V)", "SightOverviewButton")
+	_sight_overview_button.toggle_mode = true
+	_sight_overview_button.tooltip_text = "Mark the enemies the selected model can see; dim the ones it cannot"
+	_sight_overview_button.pressed.connect(func() -> void: sight_overview_pressed.emit())
+	sight_row.add_child(_sight_overview_button)
+	_sight_debug_button = UiStyle.button("Sight cylinders (L)", "SightDebugButton")
+	_sight_debug_button.toggle_mode = true
+	_sight_debug_button.tooltip_text = "Debug: draw every model's sight cylinder, tilted as the rules use it"
+	_sight_debug_button.pressed.connect(func() -> void: sight_debug_pressed.emit())
+	sight_row.add_child(_sight_debug_button)
 
 	_model_panel = PanelContainer.new()
 	_model_panel.name = "ModelPanel"
@@ -139,6 +156,12 @@ func refresh(
 	refresh_status(state)
 	_refresh_prompt(state, attack_order)
 	_refresh_model(state, selected_id, charge_mode)
+
+
+## Shows whether the sight overview and the debug cylinders are on.
+func show_sight_toggles(overview: bool, debug: bool) -> void:
+	_sight_overview_button.set_pressed_no_signal(overview)
+	_sight_debug_button.set_pressed_no_signal(debug)
 
 
 func show_message(text: String) -> void:

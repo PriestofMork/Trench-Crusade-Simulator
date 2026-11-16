@@ -31,12 +31,15 @@ var _selected: bool = false
 var _highlighted: bool = false
 var _activated: bool = false
 var _down: bool = false
+## Dimmed by the sight overview: the selected model cannot see it (brief 008).
+var _dimmed: bool = false
 ## Where the underside of the base is, and the up direction it is drawn
-## with (tilted to sit flush on a slope; presentation only).
+## with: tilted to sit flush on a slope, the same tilt its sight cylinder
+## has (SightCylinder.tilt_at(), ruling 2 of brief 008).
 var _base: Vector3 = Vector3.ZERO
 var _up: Vector3 = Vector3.UP
-## Given a base position, the up direction of the floor there (set by main).
-var floor_normal: Callable = Callable()
+## The game whose terrain decides the tilt (set by main; only read).
+var state: GameState = null
 
 ## The underside of the base; the view follows it, tilting to the floor.
 var base_position: Vector3:
@@ -93,6 +96,14 @@ func set_selected(selected: bool) -> void:
 	_apply_look()
 
 
+## Dims the model (the sight overview: the selected model cannot see it).
+func set_dimmed(dimmed: bool) -> void:
+	if dimmed == _dimmed:
+		return
+	_dimmed = dimmed
+	_apply_look()
+
+
 ## Marks the model (a hovered charge position would charge it too).
 func set_highlighted(highlighted: bool) -> void:
 	_highlighted = highlighted
@@ -125,6 +136,8 @@ func show_status(model: ModelState, activated: bool, activating: bool, in_melee:
 
 func _apply_look() -> void:
 	var base: Color = _colour.lerp(Color(0.35, 0.35, 0.35), 0.65) if _activated else _colour
+	if _dimmed:
+		base = base.lerp(Color(0.12, 0.12, 0.14), 0.7)
 	_material.albedo_color = base
 	_material.emission_enabled = _selected or _highlighted
 	if _highlighted:
@@ -179,9 +192,15 @@ func _process(delta: float) -> void:
 
 
 func _target_up() -> Vector3:
-	if not floor_normal.is_valid():
+	if state == null:
 		return Vector3.UP
-	return floor_normal.call(_base)
+	return SightCylinder.tilt_at(state, _base)
+
+
+## The up direction the model is drawn with now (eased towards the floor's
+## while it moves; the floor's own once it is still).
+func drawn_up() -> Vector3:
+	return _up
 
 
 ## Upright or tilted to `_up`, the base underside at `_base` (not when Down).

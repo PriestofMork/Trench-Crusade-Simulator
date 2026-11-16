@@ -58,6 +58,17 @@ var _confirm_label: RichTextLabel
 var _confirming: StringName = &""
 ## Melee links, enemy zones, charge labels and the contact arc.
 var _melee_view: MeleeView
+## Brief 008: the sight line on hover, the overview and the debug cylinders.
+var _sight_view: SightView
+## Sight answers for the current state, "viewer>target" -> result. Dropped
+## whenever the state changes; never worked out by a view.
+var _sight_cache: Dictionary[String, SightResult] = {}
+## The sight overview (V): marks what the selected model sees, dims the rest.
+var _sight_overview: bool = false
+## The debug view (L): every model's sight cylinder, tilted.
+var _sight_debug: bool = false
+## The enemy under the cursor while a model is selected, or -1.
+var _sight_hover: int = -1
 
 ## Charge mode (brief 007): on while the selected model picks a target. The
 ## plans (by declared target) are worked out on a worker thread.
@@ -159,6 +170,10 @@ func _unhandled_input(event: InputEvent) -> void:
 			toggle_descent_mode()
 		elif key.physical_keycode == KEY_O:
 			toggle_overrides()
+		elif key.physical_keycode == KEY_V and not key.ctrl_pressed:
+			toggle_sight_overview()
+		elif key.physical_keycode == KEY_L and not key.ctrl_pressed:
+			toggle_sight_debug()
 
 
 func _process(_delta: float) -> void:
@@ -210,6 +225,8 @@ func deselect() -> void:
 	if _selected_id != -1 and _views.has(_selected_id):
 		_views[_selected_id].set_selected(false)
 	_selected_id = -1
+	_sight_hover = -1
+	_sight_view.hide_line()
 	_unpin()
 	_refresh_all()
 
@@ -388,8 +405,10 @@ func enter_charge_mode() -> String:
 	_clear_reach()
 	_wait_for_charge_task()
 	_built_plans_ready = false
-	# The height field is shared; build it here so the worker only reads it.
+	# The height field and the sight terrain are shared; build them here so
+	# the worker only reads them.
 	state.height_field()
+	state.sight_terrain()
 	_charge_task = WorkerThreadPool.add_task(_build_charges.bind(_selected_id))
 	_hud.show_message("Charge mode: working out the charges…")
 	_refresh_all()
@@ -417,7 +436,8 @@ func exit_charge_mode() -> void:
 func _build_charges(charger_id: int) -> void:
 	var planner: ChargePlanner = ChargePlanner.new(state, charger_id)
 	var plans: Dictionary[int, ChargePlan] = {}
-	for target: ModelState in planner.candidates():
+	# Every enemy in range: those the charger cannot see get a "not visible" plan.
+	for target: ModelState in planner.in_range():
 		plans[target.id] = planner.plan(target.id)
 	_built_mutex.lock()
 	_built_plans = plans
@@ -439,11 +459,14 @@ func _collect_charges() -> void:
 	_charge_plans = plans
 	_melee_view.show_charge_labels(state, plans)
 	var reachable: int = 0
+	var unseen: int = 0
 	for plan: ChargePlan in plans.values():
 		if plan.reachable():
 			reachable += 1
-	_hud.show_message("Charge mode: %d enemies in range, %d reachable. Hover one to see the path, click to charge. Esc leaves." % [
-		plans.size(), reachable
+		if plan.not_visible:
+			unseen += 1
+	_hud.show_message("Charge mode: %d enemies in range, %d not visible, %d reachable. Hover one to see the path, click to charge. Esc leaves." % [
+		plans.size(), unseen, reachable
 	])
 
 
@@ -459,7 +482,7 @@ func request_charge(target_id: int) -> String:
 	if not _charge_mode or _charge_task != -1:
 		return "Not in charge mode."
 	if not _charge_plans.has(target_id):
-		_hud.show_message("Model %d cannot be charged: it is not an enemy within 12\" that the charger can see." % target_id)
+		_hud.show_message("Model %d cannot be charged: it is not an enemy within 12\" ." % target_id)
 		return "Not a target."
 	var plan: ChargePlan = _charge_plans[target_id]
 	if not plan.reachable():
@@ -616,6 +639,7 @@ func redo() -> String:
 
 
 func _after_restore(message: String) -> void:
+	_sight_cache.clear()
 	_unpin()
 	_close_confirm()
 	exit_charge_mode()
@@ -664,6 +688,7 @@ static func _descent_name(mode: Transitions.DescentMode) -> String:
 ## shows what core waits for now (even while events still play back).
 func _state_changed() -> void:
 	_reach_cache.clear()
+	_sight_cache.clear()
 	_attack_order.clear()
 	_hud.refresh_status(state)
 
@@ -890,9 +915,11 @@ func _refresh_all() -> void:
 		view.sync(model)
 		view.show_status(model, state.turn.has_activated(model.id), state.turn.active_model_id == model.id, MeleeZone.in_melee(state, model))
 	_hud.refresh(state, _selected_id, descent_mode(), _attack_order, _charge_mode)
+	_hud.show_sight_toggles(_sight_overview, _sight_debug)
 	_overrides.refresh(state, _selected_id)
 	_refresh_reach()
 	_refresh_melee()
+	_refresh_sight()
 
 
 ## Melee links, enemy zones while a model is selected to move or charge, and
@@ -1046,6 +1073,8 @@ func _update_hover() -> void:
 	if _contact_pending():
 		_update_contact_hover()
 		return
+	if _update_sight_hover():
+		return
 	if _reach == null:
 		return
 	var point: Variant = _hover_override
@@ -1195,6 +1224,134 @@ func contact_hover() -> int:
 	return _contact_hover
 
 
+# --- Sight (brief 008) -----------------------------------------------------
+
+
+## Whether `viewer_id` can see `target_id` now, with the clear segment: from
+## core, kept until the state changes.
+func sight(viewer_id: int, target_id: int) -> SightResult:
+	var key: String = "%d>%d" % [viewer_id, target_id]
+	var cached: SightResult = _sight_cache.get(key)
+	if cached != null:
+		return cached
+	var result: SightResult = state.rules.sight.check(state, state.get_model(viewer_id), state.get_model(target_id))
+	_sight_cache[key] = result
+	return result
+
+
+func is_sight_overview() -> bool:
+	return _sight_overview
+
+
+func is_sight_debug() -> bool:
+	return _sight_debug
+
+
+func toggle_sight_overview() -> void:
+	_sight_overview = not _sight_overview
+	_hud.show_message("Sight overview %s." % ("on: green rings mark the enemies the selected model can see" if _sight_overview else "off"))
+	_refresh_all()
+
+
+func toggle_sight_debug() -> void:
+	_sight_debug = not _sight_debug
+	_refresh_all()
+
+
+## The enemy whose sight is shown on hover, or -1 (for scripted checks).
+func sight_hover() -> int:
+	return _sight_hover
+
+
+func sight_view() -> SightView:
+	return _sight_view
+
+
+## The enemies of `viewer` on the table that it can and cannot see.
+func _enemies_by_sight(viewer: ModelState) -> Array:
+	var seen: Array[int] = []
+	var unseen: Array[int] = []
+	for model: ModelState in state.models_on_table():
+		if model.player == viewer.player:
+			continue
+		if sight(viewer.id, model.id).visible:
+			seen.append(model.id)
+		else:
+			unseen.append(model.id)
+	return [seen, unseen]
+
+
+## The overview's hidden enemies of the selected model (empty when it is off).
+func _overview_unseen() -> Array[int]:
+	var selected: ModelState = state.get_model(_selected_id)
+	if not _sight_overview or selected == null or not selected.on_table() or _charge_mode:
+		return [] as Array[int]
+	return _enemies_by_sight(selected)[1]
+
+
+## The overview marks, the dimming and the debug cylinders, from the state.
+func _refresh_sight() -> void:
+	if _sight_view == null:
+		return
+	var selected: ModelState = state.get_model(_selected_id)
+	var seen: Array[int] = []
+	var unseen: Array[int] = []
+	if _sight_overview and selected != null and selected.on_table() and not _charge_mode:
+		var split: Array = _enemies_by_sight(selected)
+		seen = split[0]
+		unseen = split[1]
+	for id: int in _views:
+		_views[id].set_dimmed(unseen.has(id))
+	_sight_view.show_seen(state, seen)
+	_show_not_visible_labels(unseen)
+	if _sight_debug:
+		var cylinders: Array[SightCylinder] = []
+		for model: ModelState in state.models_on_table():
+			cylinders.append(SightCylinder.for_model(state, model))
+		_sight_view.show_cylinders(cylinders)
+	else:
+		_sight_view.hide_cylinders()
+
+
+## "not visible" over the overview's hidden enemies plus the hovered one.
+func _show_not_visible_labels(unseen: Array[int]) -> void:
+	var ids: Array[int] = unseen.duplicate()
+	if _sight_hover != -1 and _selected_id != -1 and not _charge_mode and not ids.has(_sight_hover) and not sight(_selected_id, _sight_hover).visible:
+		ids.append(_sight_hover)
+	_sight_view.show_not_visible(state, ids)
+
+
+## With a model selected (not charging), hovering an enemy shows the sight
+## line to it or marks it not visible. Returns whether an enemy is hovered
+## (the move preview then stays hidden).
+func _update_sight_hover() -> bool:
+	var selected: ModelState = state.get_model(_selected_id)
+	var target: int = -1
+	if _pinned == null and _hover_override == null and selected != null and selected.on_table():
+		var mouse: Vector2 = get_viewport().get_mouse_position()
+		if not _over_ui(mouse):
+			var picked: int = _pick_model(mouse)
+			if picked != -1 and state.get_model(picked).player != selected.player:
+				target = picked
+	if target != _sight_hover:
+		_sight_hover = target
+		_show_not_visible_labels(_overview_unseen())
+	if target == -1:
+		_sight_view.hide_line()
+		return false
+	_preview.hide_all()
+	var result: SightResult = sight(_selected_id, target)
+	if result.visible:
+		_sight_view.show_line(result.from, result.to)
+		_distance_label.text = "Model %d: visible" % target
+	else:
+		_sight_view.hide_line()
+		_distance_label.text = "Model %d: not visible" % target
+	_distance_label.position = _camera.unproject_position(state.get_model(target).position) + Vector2(18, -60)
+	_distance_label.visible = true
+	return true
+
+
 ## The model whose base is nearest a table point (within 2"), or -1.
 func _model_near(point: Vector3) -> int:
 	var best: int = -1
@@ -1223,35 +1380,10 @@ func _display_path(start: Vector3, path: Array[Vector3]) -> Array[Vector3]:
 	return _shown_path(points, kinds)
 
 
-## Up direction of the floor under a base at `base` (for tilting the views):
-## the surface at that height whose footprint the centre is deepest inside,
-## level if there is none (on a wall, in the air). A base half over a ledge
-## takes its own floor's tilt. Reads terrain only.
-func _floor_up_at(base: Vector3) -> Vector3:
-	var field: HeightField = state.height_field()
-	var p: Vector2 = Vector2(base.x, base.z)
-	var best: int = -1
-	var best_depth: float = INF
-	for s: int in field.surfaces_matching(p, base.y, 0.02):
-		var depth: float = field.surfaces[s].shape.signed_distance(p)
-		if depth < best_depth:
-			best_depth = depth
-			best = s
-	if best == -1:
-		return Vector3.UP
-	var gradient: Vector2 = field.surfaces[best].gradient
-	return Vector3(-gradient.x, 1.0, -gradient.y).normalized()
-
-
-## Up direction of the floor a destination is on.
+## Up direction of the floor a destination is on: the tilt core gives a
+## model standing there (SightCylinder.tilt_at()).
 func _floor_normal(point: Vector3) -> Vector3:
-	if _reach == null:
-		return Vector3.UP
-	var surfaces: PackedInt32Array = _reach.legality.surfaces_at(point)
-	if surfaces.is_empty():
-		return Vector3.UP
-	var gradient: Vector2 = _reach.field.surfaces[surfaces[surfaces.size() - 1]].gradient
-	return Vector3(-gradient.x, 1.0, -gradient.y).normalized()
+	return SightCylinder.tilt_at(state, point)
 
 
 ## Where the selected model's centre goes for a point on a floor: the closest
@@ -1312,7 +1444,7 @@ func _build_terrain_views() -> void:
 func _build_model_views() -> void:
 	for model: ModelState in state.models:
 		var view: ModelView = ModelView.new()
-		view.floor_normal = _floor_up_at
+		view.state = state
 		view.setup(model)
 		_models_root.add_child(view)
 		_views[model.id] = view
@@ -1325,6 +1457,8 @@ func _build_overlays() -> void:
 	add_child(_preview)
 	_melee_view = MeleeView.new()
 	add_child(_melee_view)
+	_sight_view = SightView.new()
+	add_child(_sight_view)
 
 	var layer: CanvasLayer = CanvasLayer.new()
 	layer.name = "Ui"
@@ -1350,6 +1484,8 @@ func _build_overlays() -> void:
 	_hud.redo_pressed.connect(func() -> void: redo())
 	_hud.descent_pressed.connect(func() -> void: toggle_descent_mode())
 	_hud.attacker_picked.connect(func(id: int) -> void: pick_attacker(id))
+	_hud.sight_overview_pressed.connect(func() -> void: toggle_sight_overview())
+	_hud.sight_debug_pressed.connect(func() -> void: toggle_sight_debug())
 
 	_tray = DiceTray.new()
 	_tray.custom_minimum_size = Vector2(TRAY_WIDTH, 0)
