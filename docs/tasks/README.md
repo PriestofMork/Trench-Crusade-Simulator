@@ -26,12 +26,10 @@ Open a new session in this folder and say:
 | `005-turns-rolls-dash.md` | Done |
 | `006-height-part-2.md` | Done |
 | `007-charge-melee-retreat.md` | Done |
-| `008-line-of-sight.md` | Ready |
+| `008-line-of-sight.md` | Done |
+| `008b-charge-corrections-and-down.md` | Ready |
 
 ## Planned next (not yet written)
 
-- 008b: charge corrections (hopeless charges can be declared, contact and sliding
-  across heights) and the Down rules (cannot move, -1 die, activation ends, ledge
-  fall). To start once 008 is finished, since both touch the charge code.
 - 009: ranged and melee attacks, armour, Bloodbath, weapons as data
 - 010: import the TTS models and show them on their bases

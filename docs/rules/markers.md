@@ -58,15 +58,17 @@ The reverse of blood markers. Spent by the model's own player:
 
 ### Going Down next to a ledge
 
-- When a model suffers a Down result while any edge of its base is within 1" of a
-  ledge, it first makes a success roll. On a failure it falls over the edge
-  (resolved like a failed jump, see `movement.md`) and is Down where it lands. On a
-  success it goes Down where it is.
+- A ledge is the edge of the floor the model stands on where the drop is more than
+  1".
+- When a standing model suffers a Down result while any edge of its base is within
+  1" of a ledge, it first makes a success roll. The roll is made before the model is
+  Down, so without the Down penalty.
+- On a success it goes Down where it is.
+- On a failure it falls over the nearest ledge, following the falling rules in
+  `movement.md` (including the injury roll for a fall of 3" or more), and is Down
+  where it lands.
+- A model that is already Down makes no ledge roll.
 
 ## Open questions
 
 1. What can a model do if it is prevented from standing up?
-2. Ledge: how large a drop counts? Is the ledge roll made before the Down, so
-   without the Down penalty? (Assumed: yes.)
-3. A charge with no possible route at all (for example a target on a sheer cliff):
-   what does the charger do?

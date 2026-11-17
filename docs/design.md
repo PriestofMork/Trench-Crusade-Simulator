@@ -67,7 +67,7 @@ Two layers with a one-way dependency: `game/` knows `core/`, never the reverse.
 | Blessing markers | The rolling player is prompted whether to spend blessing markers, if they have any. |
 | Modifiers | Weapon and situational modifiers are applied automatically and shown in the roll breakdown. |
 | Descent mode | A per-selection toggle, "Drop" or "Climb down", decides how the reach field handles drops of 3" or more. Switching it recomputes the movement area. Default: Drop. |
-| Models on slopes | The visual model and its base tilt to sit flush on the surface under them. The rules cylinder stays vertical: tilt is presentation only and never affects movement, support or line of sight. |
+| Models on slopes | The visual model and its base tilt to sit flush on the surface under them. For line of sight the rules cylinder tilts the same way (core works out the tilt, the view draws it). For movement, support, the melee zone and headroom the cylinder stays vertical. |
 | Undo | Every command can be undone, back to the start of the game, by restoring a snapshot of the full state including the dice state. Take-backs are agreed between players, not policed. Online play will need both players to accept an undo. |
 | Manual override | A way to set markers or move a model by hand must exist, so games are playable before every rule is automated. |
 | Maps | Imported from Tabletop Simulator saves where possible, with collision blocked out by hand. A map editor comes later. |

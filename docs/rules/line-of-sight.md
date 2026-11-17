@@ -48,6 +48,10 @@ never be hard-coded where they are used.
 - Only the simplified collision shapes of terrain count, never the visual mesh.
 - Each terrain shape is either blocking or not blocking for line of sight.
 
+- A sight line that only grazes a surface or an edge is not blocked. The underside
+  of a terrain piece or of a model counts as solid, so a line along the floor does
+  not slip under a wall standing on it.
+
 ## Open questions
 
 1. **Cover.** Deferred on purpose; to be discussed later. Visibility (yes/no) can be

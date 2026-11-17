@@ -91,11 +91,20 @@ Sheer, is a sheer surface and needs the climb below.
 
 ### Details (confirmed)
 
-- The order is: declare the target, roll the D6, then move. A charge moves along the
-  shortest legal path and may not use anything that needs a roll (sheer climbs, gap
-  jumps, drops of 3" or more).
+- The order is: declare the target, roll the D6, then move along the shortest path
+  to the target.
+- A charge moves like any other movement: it may climb, jump gaps and drop, with
+  the usual rolls and the usual results of failing them. A failed roll on the way
+  also means the charge has failed.
+- The player chooses, when declaring, whether the charge may take routes that need
+  rolls or must use the shortest roll-free route. The Drop / Climb down choice
+  applies as for a Move.
 - A charge can always be declared against a visible enemy within 12", even if it
   cannot succeed. It then fails as described above.
+- If no position in base contact with the target exists at all (for example it
+  stands on a pillar no wider than its base), the charger heads for the position
+  closest to the target where it can stop. If it ends within 1" of the target it is
+  in melee and the target counts as charged.
 - An enemy interposes only if its 1" zone is entered before the target's own 1" zone.
   One entered afterwards is part of a multi-charge instead. An interposing model
   becomes the target even if it is not visible or is further than 12" away.
@@ -112,8 +121,8 @@ Sheer, is a sheer surface and needs the climb below.
 - After the free attacks, a retreating model may end its move while still in melee.
   If a free attack puts it Down, its activation ends where it is.
 
-Not implemented yet (brief 007 built an earlier reading): declaring a hopeless
-charge, contact across heights, sliding across levels.
+Brief 007 built an earlier reading of several of these points; brief 008b brings
+the game in line.
 
 ## Open questions
 
