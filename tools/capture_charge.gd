@@ -54,7 +54,7 @@ func _run() -> void:
 	var plans: Dictionary[int, ChargePlan] = _main.charge_plans()
 	_check(plans.has(16) and plans[16].label() == "certain", "16 is a certain charge")
 	_check(plans.has(17) and plans[17].label() == "needs 2+", "17 needs 2+ (%s)" % (plans[17].label() if plans.has(17) else "-"))
-	_check(plans.has(20) and plans[20].label() == "out of reach", "20 on the sheer wall is out of reach")
+	_check(plans.has(20) and not plans[20].contact, "20 on the sheer wall: no roll-free way to contact (%s)" % (plans[20].label() if plans.has(20) else "-"))
 	_check(plans.has(19) and plans[19].reachable(), "19 on the crate can be charged")
 	await _hover_model(16)
 	await _shot("04_hover_certain_charge_path")
@@ -66,7 +66,7 @@ func _run() -> void:
 	await _shot("06_hover_target_on_the_crate")
 	await _hover_model(20)
 	await _shot("07_hover_target_on_the_sheer_wall_out_of_reach")
-	_check(_label_text().contains("out of reach"), "hover label: %s" % _label_text())
+	_check(_label_text().contains("no base contact"), "hover label: %s" % _label_text())
 
 	# 3. A certain charge: click 16, confirm with a click, the D6 rolls.
 	var before_charge: int = state.history.size()

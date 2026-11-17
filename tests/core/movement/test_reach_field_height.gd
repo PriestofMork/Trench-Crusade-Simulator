@@ -5,6 +5,21 @@ const TEST_TABLE: String = "res://data/tables/height_test_table.json"
 const R32: float = 0.62992126
 
 var state: GameState
+## The test table's reach field for each model, built once and shared by the
+## tests that go over every model (the table is the same for all of them;
+## each still checks against its own fresh state): {id: [field, build ms]}.
+static var _table_fields: Dictionary = {}
+
+
+## The shared reach field of `model_id` on the test table (see _table_fields).
+func _table_field(model_id: int) -> ReachField:
+	if not _table_fields.has(model_id):
+		var built: GameState = GameState.new(1)
+		TableSetup.apply_file(built, TEST_TABLE)
+		var started: int = Time.get_ticks_usec()
+		var field: ReachField = ReachField.new(built, model_id)
+		_table_fields[model_id] = [field, (Time.get_ticks_usec() - started) / 1000.0]
+	return _table_fields[model_id][0]
 
 
 func before_each() -> void:
@@ -272,7 +287,7 @@ func test_consistency_on_the_test_table() -> void:
 	var started: int = Time.get_ticks_usec()
 	var fields: int = 0
 	for model: ModelState in state.models:
-		var field: ReachField = ReachField.new(state, model.id)
+		var field: ReachField = _table_field(model.id)
 		fields += 1
 		var stride: int = maxi(field.state_count() / 400, 1)
 		for k: int in range(0, field.state_count(), stride):
@@ -305,11 +320,9 @@ func test_consistency_on_the_test_table() -> void:
 func test_test_table_build_time() -> void:
 	_test_table()
 	for model: ModelState in state.models:
-		var started: int = Time.get_ticks_usec()
-		var field: ReachField = ReachField.new(state, model.id)
+		var field: ReachField = _table_field(model.id)
 		gut.p("model %d (%d mm, %.0f\"): %d states, %.1f ms" % [
-			model.id, model.base_mm, model.movement, field.state_count(),
-			(Time.get_ticks_usec() - started) / 1000.0
+			model.id, model.base_mm, model.movement, field.state_count(), float(_table_fields[model.id][1])
 		])
 	pass_test("timing only")
 
@@ -375,7 +388,7 @@ func test_roll_lists_match_the_move_command_with_risky_routes() -> void:
 	var checked: int = 0
 	var risky: int = 0
 	for model: ModelState in state.models:
-		var field: ReachField = ReachField.new(state, model.id)
+		var field: ReachField = _table_field(model.id)
 		var stride: int = maxi(field.state_count() / 250, 1)
 		for k: int in range(0, field.state_count(), stride):
 			if not field.is_state_reachable(k):
