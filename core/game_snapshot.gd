@@ -16,6 +16,7 @@ var _flags: Array[Dictionary] = []
 var _pending: PendingDecision
 var _active_roll: ActiveRoll
 var _resolution: Resolution
+var _interrupts: Array[Interrupt] = []
 var _dice_state: int
 var _history_size: int
 
@@ -35,6 +36,7 @@ static func take(state: GameState) -> GameSnapshot:
 	snapshot._pending = state.pending
 	snapshot._active_roll = _copy_roll(state.active_roll)
 	snapshot._resolution = state.resolution.copy() if state.resolution != null else null
+	snapshot._interrupts = _copy_interrupts(state.interrupts)
 	snapshot._dice_state = state.dice.get_state()
 	snapshot._history_size = state.history.size()
 	return snapshot
@@ -66,6 +68,7 @@ func restore(state: GameState) -> void:
 	state.pending = _pending
 	state.active_roll = _copy_roll(_active_roll)
 	state.resolution = _resolution.copy() if _resolution != null else null
+	state.interrupts = _copy_interrupts(_interrupts)
 	state.dice.set_state(_dice_state)
 	state.history.resize(_history_size)
 
@@ -82,6 +85,13 @@ static func _copy_turn(source: TurnState) -> TurnState:
 	copy.stood_up = source.stood_up
 	copy.charged = source.charged.duplicate()
 	return copy
+
+
+static func _copy_interrupts(source: Array[Interrupt]) -> Array[Interrupt]:
+	var result: Array[Interrupt] = []
+	for interrupt: Interrupt in source:
+		result.append(interrupt.copy() as Interrupt)
+	return result
 
 
 static func _copy_roll(source: ActiveRoll) -> ActiveRoll:

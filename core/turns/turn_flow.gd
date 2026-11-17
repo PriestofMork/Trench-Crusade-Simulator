@@ -111,8 +111,9 @@ static func end_activation_when_done(state: GameState, events: Array[GameEvent],
 		end_activation(state, events, reason)
 
 
-## The model goes Down (ruling 4 of brief 006: during its own activation, that
-## activation ends).
+## The model goes Down (ruling 4 of brief 006, ruling 12 of brief 008b: during
+## its own activation, that activation ends). Only for a Down result already
+## through GoingDown.result(), which makes any ledge roll first.
 static func knock_down(state: GameState, model: ModelState, events: Array[GameEvent]) -> void:
 	model.down = true
 	events.append(GameEvent.new(GameEvent.Kind.MODEL_WENT_DOWN, model.player, model.id))
@@ -215,6 +216,8 @@ static func activation_error(state: GameState, player: int, model: ModelState) -
 	if pending != null and not own_open_move:
 		return "Waiting for a decision first."
 	if state.active_roll != null:
+		return "A roll is under way."
+	if not state.interrupts.is_empty():
 		return "A roll is under way."
 	if state.resolution != null:
 		return "A move is under way."

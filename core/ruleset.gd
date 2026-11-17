@@ -140,6 +140,13 @@ static func from_data(data: Dictionary) -> Ruleset:
 			StringName(entry["id"]), StringName(entry["context"]), String(entry["label"]), kinds,
 			float(entry["step"]), int(entry["dice"])
 		))
+	for entry: Dictionary in data.get("model_states", []):
+		var kinds: Array[RollRequest.Kind] = []
+		for kind: String in entry.get("roll_kinds", []):
+			kinds.append(ROLL_KINDS[kind])
+		rules.add_modifier_provider(ModelStateModifier.new(
+			StringName(entry["id"]), StringName(entry["state"]), String(entry["label"]), kinds, int(entry.get("dice", 0))
+		))
 	for entry: Dictionary in data.get("activation_start", []):
 		match String(entry["rule"]):
 			"marker_growth":

@@ -24,6 +24,12 @@ var active_roll: ActiveRoll = null
 ## What a model is in the middle of across several commands (a move with
 ## rolls in it), or null. See Resolution.
 var resolution: Resolution = null
+## Interrupts under way inside whatever is being resolved (a ledge roll),
+## newest last. See Interrupt.
+var interrupts: Array[Interrupt] = []
+## How many roll reactions are running right now (RollPipeline). Never set
+## between commands, so not part of snapshots.
+var reactions_running: int = 0
 ## Every command applied, in order: with the seed, this is the whole game.
 var history: Array[Command] = []
 ## The events of the last command applied.

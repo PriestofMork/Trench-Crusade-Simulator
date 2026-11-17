@@ -3,7 +3,8 @@ extends RefCounted
 ## Runs every roll the same way: collect the automatic modifiers from the
 ## registered providers, ask each registered pre-roll choice in turn (as
 ## pending decisions, so core never waits), roll through the resolver, run
-## the registered reactions, then hand the result to the requester.
+## the registered reactions, then hand the result to the requester (after
+## any interrupt a reaction started, such as a ledge roll, is over).
 ## Refers to no specific rule: everything specific is a registered provider.
 
 
@@ -77,7 +78,17 @@ static func _resolve(state: GameState, events: Array[GameEvent]) -> void:
 	event.roll = roll
 	event.result = result
 	events.append(event)
+	var interrupts_before: int = state.interrupts.size()
+	state.reactions_running += 1
 	for reaction: RollReaction in state.rules.reactions:
 		reaction.react(state, result, events)
+	state.reactions_running -= 1
+	if state.interrupts.size() > interrupts_before:
+		# A reaction started something that must be resolved first (a ledge
+		# roll): it holds this result and hands it on when it is over.
+		var interrupt: Interrupt = state.interrupts[interrupts_before]
+		interrupt.held = result
+		interrupt.begin(state, events)
+		return
 	if roll.request.on_resolved.is_valid():
 		roll.request.on_resolved.call(state, result, events)

@@ -15,6 +15,9 @@
 	"context_dice": [
 		{"id": "fall", "context": "fall_inches", "label": "Fall of %.1f\"", "roll_kinds": ["injury"], "step": 3.0, "dice": 1}
 	],
+	"model_states": [
+		{"id": "down", "state": "down", "label": "Down", "roll_kinds": ["success"], "dice": -1}
+	],
 	"activation_start": [
 		{"rule": "marker_growth", "marker": "infection", "amount": 1}
 	],

@@ -50,6 +50,10 @@ const NEAR_DISTANCE: float = 3.6
 const NEAR_CAP: float = 2.0
 ## Support needed to stop: half the base area.
 const SUPPORT_TO_STOP: float = 0.5
+## Ledge queries: how far apart edge points are sampled, and how far beyond
+## the edge the floor below is looked for.
+const LEDGE_STEP: float = 0.05
+const LEDGE_PROBE: float = 0.02
 ## Index of the tabletop in `surfaces`.
 const TABLE: int = 0
 
@@ -388,6 +392,65 @@ static func _grown(polygon: PackedVector2Array, distance: float) -> PackedVector
 	for corner: Vector2 in polygon:
 		result.append(corner + (corner - centre).normalized() * distance * 1.5)
 	return result
+
+
+## The ledge nearest to a base of `radius` with its centre at p on `surface`
+## (docs/rules/markers.md, "Going Down next to a ledge"): a point on the edge
+## of the floor the base stands on (its level group; the seams between pieces
+## of one level are no edge, the table's own edge is no ledge) where the floor
+## beyond is more than `min_drop` lower. Only ledges closer than `within` to
+## the edge of the base count (exactly `within` away is not within, as for the
+## 1" melee zone). Returns {} or {"point": Vector3 on the edge at the floor's
+## height, "normal": Vector2 pointing off the floor, "distance": from the
+## base edge, "drop": inches}. Edges are sampled LEDGE_STEP apart. Plain data
+## only, for core.
+func ledge_near(p: Vector2, surface: int, radius: float, within: float, min_drop: float) -> Dictionary:
+	var best: Dictionary = {}
+	var best_distance: float = within - EPSILON
+	var members: PackedInt32Array = level_members(surface)
+	for member: int in members:
+		var s: Surface = surfaces[member]
+		if s.is_table():
+			continue
+		var polygon: PackedVector2Array = s.polygon
+		var orientation: float = signf(PlanarGeometry.polygon_double_area(polygon))
+		for i: int in polygon.size():
+			var a: Vector2 = polygon[i]
+			var b: Vector2 = polygon[(i + 1) % polygon.size()]
+			if PlanarGeometry.point_segment_distance(p, a, b) - radius >= best_distance:
+				continue
+			var edge: Vector2 = b - a
+			var normal: Vector2 = Vector2(edge.y, -edge.x).normalized() * orientation
+			if s.shape.signed_distance((a + b) * 0.5 + normal * LEDGE_PROBE) <= 0.0:
+				normal = -normal
+			var count: int = maxi(ceili(edge.length() / LEDGE_STEP), 1)
+			for k: int in count + 1:
+				var q: Vector2 = a.lerp(b, float(k) / count)
+				var distance: float = p.distance_to(q) - radius
+				if distance >= best_distance:
+					continue
+				var drop: float = _drop_beyond(q, normal, s.height_at(q), members)
+				if drop > min_drop + Transitions.HEIGHT_SLACK:
+					best_distance = distance
+					best = {"point": Vector3(q.x, s.height_at(q), q.y), "normal": normal, "distance": distance, "drop": drop}
+	return best
+
+
+## How far the floor drops just beyond the edge point q (off its floor along
+## `normal`), from height y: 0 where another piece of the same level, or
+## terrain reaching up to near y, is there.
+func _drop_beyond(q: Vector2, normal: Vector2, y: float, members: PackedInt32Array) -> float:
+	var o: Vector2 = q + normal * LEDGE_PROBE
+	for member: int in members:
+		if surfaces[member].shape.signed_distance(o) <= EDGE_SLACK:
+			return 0.0
+	var fill: float = 0.0
+	for index: int in _cell_solids[_cell_at(o)]:
+		var solid: Solid = solids[index]
+		if solid.bottom > y - TOLERANCE or solid.shape.signed_distance(o) > EDGE_SLACK:
+			continue
+		fill = maxf(fill, minf(solid.top_at(o), y))
+	return y - fill
 
 
 ## The surfaces at p whose height there is within `tolerance` of y.

@@ -46,6 +46,9 @@ enum Kind {
 	FREE_ATTACK,
 	## A Retreat started ("enemies": the ids it is in melee with).
 	RETREAT_STARTED,
+	## A ledge roll is about to be made ("reason": why, for the tray; "at": the
+	## ledge point; "drop"; "distance": from the base edge).
+	LEDGE_ROLL,
 }
 
 var kind: Kind

@@ -86,4 +86,6 @@ func react(state: GameState, result: RollResult, events: Array[GameEvent]) -> vo
 	if band.out_of_action:
 		TurnFlow.take_out_of_action(state, target, events)
 	elif went_down:
-		TurnFlow.knock_down(state, target, events)
+		# Through the one Down step: the ledge roll first if there is a ledge
+		# (not for the injury roll of a ledge roll's own fall).
+		GoingDown.result(state, target, events, Callable(), not request.context.get(LedgeRoll.NO_LEDGE_ROLL, false))

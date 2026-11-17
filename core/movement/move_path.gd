@@ -21,6 +21,7 @@ extends RefCounted
 enum Rejection { NONE, INVALID, TOO_FAR, BLOCKED, TOO_CLOSE_TO_ENEMY, NEEDS_ROLL, TOO_WIDE }
 
 const EPSILON: float = 0.0001
+const DOWN_ERROR: String = "Model %d is Down and cannot move."
 
 var model_id: int
 var waypoints: Array[Vector3]
@@ -82,6 +83,9 @@ func _check(state: GameState) -> String:
 		return "No model with id %d." % model_id
 	if not model.on_table():
 		return "Model %d is Out of Action." % model_id
+	# Ruling 10 of brief 008b: a Down model cannot move (only fall).
+	if model.down:
+		return DOWN_ERROR % model_id
 	if budget < 0.0:
 		budget = model.movement
 	if waypoints.is_empty():
