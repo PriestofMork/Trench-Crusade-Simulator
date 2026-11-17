@@ -1,29 +1,36 @@
 class_name ChargePlanner
 extends RefCounted
-## Works out charges for one charger (docs/rules/movement.md, "Charge";
-## rulings of brief 007):
-## - targets (ruling 11, 12): enemy models on the table that are within 12",
-##   edge to edge in a straight line between the cylinders, ignoring
-##   terrain, and that the charger can see (GameState.rules.sight; brief 008);
-## - the charge path (ruling 3): the shortest legal path to base contact,
-##   with every enemy 1" zone open (bases still block) and no rolls on the way
-##   (ruling 5: walks, open climbs, ladders, low obstacles and drops under 3");
-## - base contact (ruling 6): the charger's base touching the target's seen
-##   from above, on a floor no more than the low obstacle height above or
-##   below the target's, somewhere it can stop;
-## - interposing (ruling 4): if the path comes within 1" of another enemy
-##   before it comes within 1" of the target, that model is charged instead
-##   and the path is worked out again to it. The model in the way needs
-##   neither sight nor range (ruling 10 of brief 008): only the declared
-##   target does;
-## - the D6 needed (ruling 2): the smallest result whose Movement + D6,
-##   halved as a whole after standing up, covers the path.
+## Works out charges for one charger (docs/rules/movement.md, "Charge" and
+## "Details (confirmed)"; brief 007 as corrected by brief 008b):
+## - targets (ruling 5 of 008b): enemy models on the table within 12", edge to
+##   edge in a straight line between the cylinders, ignoring terrain, that the
+##   charger can see (GameState.rules.sight; brief 008). Every one of them can
+##   be declared, even one that no D6 result reaches;
+## - the route, for each route choice (ruling 2): with "allow climbs and
+##   jumps" off the shortest roll-free route, with it on the shortest route of
+##   any kind (sheer climbs, gap jumps, drops of 3" or more; ruling 1). Every
+##   enemy 1" zone is open on the way (bases still block). The Drop / Climb
+##   down choice applies as for a Move. The routes come from the reach field,
+##   the same search a Move uses (ReachField: its tier 0 is the roll-free
+##   search, so one field serves both choices);
+## - the end of the route: the cheapest position in base contact with the
+##   target (ruling 7: the bases touch seen from above and the cylinders
+##   overlap in height) where the charger can stop. If none is within the
+##   longest charge, the route is looked for further (EXTENDED_DISTANCE) so a
+##   charge that cannot succeed still moves along it (rulings 4 and 5). If no
+##   contact position can be reached at all (the target on a pillar no wider
+##   than its base, or walled in), the route ends at the position closest to
+##   the target, edge to edge, where the charger can stop (ruling 6);
+## - interposing (ruling 9, unchanged from 007): if the route comes within 1"
+##   of another enemy before it comes within 1" of the target, that model is
+##   charged instead and the route is worked out again to it. The model in
+##   the way needs neither sight nor range;
+## - the D6 needed: the smallest result whose Movement + D6, halved as a whole
+##   after standing up, covers the route; CANNOT_REACH if none does.
 ##
-## One reach field (with the charge settings, as far as the longest charge
-## can go) serves every target of the charger. Pure core: the game may build
-## a planner on a worker thread.
+## Pure core: the game may build a planner on a worker thread.
 
-## Ruling 12: targets are within this distance, edge to edge.
+## Targets are within this distance, edge to edge.
 const RANGE_INCHES: float = 12.0
 ## The charge die.
 const DIE_SIDES: int = 6
@@ -31,58 +38,94 @@ const DIE_SIDES: int = 6
 ## best is then refined between its neighbours.
 const CONTACT_SAMPLES: int = 72
 const REFINE_STEPS: int = 6
-## Spacing of the points checked along a path for interposing models.
+## Spacing of the points checked along a route for interposing models.
 const PATH_STEP: float = 0.05
 const EPSILON: float = 0.0001
 ## The reason given for an enemy in range the charger cannot see.
 const NOT_VISIBLE_ERROR: String = "The charger cannot see model %d."
+## How long a route may be when the longest charge does not reach contact:
+## the second, coarser reach field goes this far (ruling 5).
+const EXTENDED_DISTANCE: float = 18.0
+const EXTENDED_CELL: float = 0.5
 
 var state: GameState
 var charger: ModelState
+## How drops of 3" or more are taken on the route (the Drop / Climb down choice).
+var descent_mode: Transitions.DescentMode = Transitions.DescentMode.DROP
 ## The longest charge the charger could make now (Movement + 6, halved after
 ## standing up).
 var max_distance: float = 0.0
-## Where the charge paths come from (built when first needed).
+## Where the routes come from (built when first needed): one field as far as
+## the longest charge, one coarser and further for charges it does not reach.
 var _field: ReachField = null
+var _extended: ReachField = null
+## Per field and target id, the best contact for both route choices
+## ([rolls not allowed, rolls allowed]; {} where there is none), found in one
+## pass.
+var _contacts: Dictionary = {}
 
 
-func _init(p_state: GameState, charger_id: int) -> void:
+func _init(p_state: GameState, charger_id: int, p_descent_mode: Transitions.DescentMode = Transitions.DescentMode.DROP) -> void:
 	state = p_state
 	charger = state.get_model(charger_id)
+	descent_mode = p_descent_mode
 	if charger != null:
 		max_distance = distance_for(DIE_SIDES)
 
 
-## How far the charger charges on a D6 result of `roll` (ruling 2).
+## How far the charger charges on a D6 result of `roll`.
 func distance_for(roll: int) -> float:
 	return TurnFlow.movement_budget(state, charger, charger.movement + roll)
 
 
-## The charge settings for moves and checks along a charge path.
+## The charge settings for moves along a charge route: every zone open.
 static func zones() -> EnemyZones:
 	return EnemyZones.charge()
 
 
-## A legality for the charger with the charge settings.
-static func legality_for(p_state: GameState, model: ModelState) -> MoveLegality:
+## A legality for the charger with the charge settings and a route choice.
+static func legality_for(
+	p_state: GameState, model: ModelState, allow_rolls: bool = false,
+	p_descent_mode: Transitions.DescentMode = Transitions.DescentMode.DROP
+) -> MoveLegality:
 	var legality: MoveLegality = MoveLegality.new(p_state, model, null, zones())
-	legality.allow_rolls = false
+	legality.allow_rolls = allow_rolls
+	legality.descent_mode = p_descent_mode
 	return legality
 
 
-## The reach field of charge paths (open zones, no rolls, up to max_distance).
+## The reach field's route choice for a charge route choice.
+static func route_choice(allow_rolls: bool) -> ReachField.RouteChoice:
+	return ReachField.RouteChoice.SHORTEST if allow_rolls else ReachField.RouteChoice.SAFE_ONLY
+
+
+## The reach field of charge routes up to max_distance (rolls searched, so
+## both route choices come from it).
 func field() -> ReachField:
 	if _field == null:
-		_field = ReachField.new(
-			state, charger.id, max_distance, ReachField.CELL_SIZE, Transitions.DescentMode.DROP, zones(), false
-		)
+		_field = ReachField.new(state, charger.id, max_distance, ReachField.CELL_SIZE, descent_mode, zones(), true)
 	return _field
 
 
-## Why `target` cannot be declared as the target before any path is looked
-## at (not an enemy, too far, not seen), or "". Range is checked before
-## sight, so an enemy in range that cannot be seen is told apart
-## (not_visible()).
+## The coarser field for routes longer than the longest charge. Built with
+## rolls only if a route with rolls is wanted (its tier 0 then also serves the
+## roll-free choice); a roll-free one is cheaper.
+func extended_field(allow_rolls: bool = true) -> ReachField:
+	if _extended != null and (_extended.allow_rolls or not allow_rolls):
+		return _extended
+	_extended = ReachField.new(
+		state, charger.id, maxf(EXTENDED_DISTANCE, max_distance), EXTENDED_CELL, descent_mode, zones(), allow_rolls
+	)
+	for key: Vector2i in _contacts.keys():
+		if key.x == 1:
+			_contacts.erase(key)
+	return _extended
+
+
+## Why `target` cannot be declared as the target (not an enemy, too far, not
+## seen), or "". Range is checked before sight, so an enemy in range that
+## cannot be seen is told apart (not_visible()). Whether a D6 can reach does
+## not matter (ruling 5).
 func target_error(target: ModelState) -> String:
 	if target == null:
 		return "No such model to charge."
@@ -115,7 +158,7 @@ func in_range() -> Array[ModelState]:
 	return result
 
 
-## The models the charger may declare a charge against (whatever the path).
+## The models the charger may declare a charge against.
 func candidates() -> Array[ModelState]:
 	var result: Array[ModelState] = []
 	for other: ModelState in state.models:
@@ -124,57 +167,95 @@ func candidates() -> Array[ModelState]:
 	return result
 
 
-## The charge against `target_id`: interposing applied, its path and the D6
-## it needs. The plan's error is set if it cannot be declared.
-func plan(target_id: int) -> ChargePlan:
+## The charge against `target_id` with both route choices: [rolls not
+## allowed, rolls allowed].
+func plans(target_id: int) -> Array[ChargePlan]:
+	var error: String = target_error(state.get_model(target_id))
+	return [_plan_with(target_id, false, error), _plan_with(target_id, true, error)]
+
+
+## The charge against `target_id` with a route choice: interposing applied,
+## its route and the D6 it needs. The plan's error is set if it cannot be
+## declared.
+func plan(target_id: int, allow_rolls: bool = false) -> ChargePlan:
+	return _plan_with(target_id, allow_rolls, target_error(state.get_model(target_id)))
+
+
+func _plan_with(target_id: int, allow_rolls: bool, error: String) -> ChargePlan:
 	var result: ChargePlan = ChargePlan.new()
 	result.charger_id = charger.id if charger != null else -1
 	result.declared_id = target_id
 	result.target_id = target_id
-	result.error = target_error(state.get_model(target_id))
+	result.allow_rolls = allow_rolls
+	result.descent_mode = descent_mode
+	result.error = error
 	if result.error != "":
-		result.not_visible = not_visible(state.get_model(target_id))
+		result.not_visible = result.error == NOT_VISIBLE_ERROR % target_id
 		return result
 	var visited: Dictionary[int, bool] = {}
 	var current: int = target_id
 	while true:
 		visited[current] = true
 		result.target_id = current
-		var best: Array = _best_contact(state.get_model(current))
-		if best.is_empty():
-			result.path = []
-			result.length = INF
-			result.needed = ChargePlan.OUT_OF_REACH
-			result.error = "Out of reach: no path to base contact with model %d without a roll within %.1f\"." % [
-				current, max_distance
-			]
-			return result
-		result.path = best[0]
-		result.length = best[1]
+		var route: Dictionary = route_to(state.get_model(current), allow_rolls)
+		result.path = route.get("path", [] as Array[Vector3])
+		result.length = route.get("length", INF)
+		result.contact = route.get("contact", false)
+		if result.path.is_empty():
+			break
 		var interposer: int = interposing(result.path, current)
 		if interposer == -1 or visited.has(interposer):
 			break
 		result.interposers.append(interposer)
 		current = interposer
+	if result.path.is_empty():
+		result.needed = ChargePlan.CANNOT_REACH
+		return result
+	for segment: MoveSegment in field().legality.segments_for(charger.position, result.path):
+		result.rolls.append_array(segment.rolls())
 	result.needed = needed_roll(result.length)
-	if result.needed == ChargePlan.OUT_OF_REACH:
-		result.error = "Out of reach: the charge path is %.1f\", more than the longest charge (%.1f\")." % [
-			result.length, max_distance
-		]
+	var target: ModelState = state.get_model(result.target_id)
+	result.ends_in_melee = MeleeZone.is_within(MeleeZone.gap(charger, target, result.end()))
 	return result
 
 
 ## The smallest D6 result whose charge distance covers `length`: 0 if no die
-## is needed, 1 to 6, or ChargePlan.OUT_OF_REACH.
+## is needed, 1 to 6, or ChargePlan.CANNOT_REACH.
 func needed_roll(length: float) -> int:
 	for roll: int in DIE_SIDES + 1:
 		if distance_for(roll) + EPSILON >= length:
 			return roll
-	return ChargePlan.OUT_OF_REACH
+	return ChargePlan.CANNOT_REACH
 
 
-## The first other enemy whose 1" zone the path from the charger's position
-## through `path` enters before it enters `target_id`'s, or -1 (ruling 4).
+## The route to `target` with a route choice: {"path", "length", "contact"},
+## or {} if the charger cannot move anywhere. Base contact within the longest
+## charge, else further (ruling 5), else the closest position (ruling 6).
+func route_to(target: ModelState, allow_rolls: bool) -> Dictionary:
+	var index: int = 1 if allow_rolls else 0
+	var choice: ReachField.RouteChoice = route_choice(allow_rolls)
+	var found: Dictionary = _contacts_in(field(), target)[index]
+	if not found.is_empty():
+		return found
+	# Further than the longest charge, unless nothing further can be reached.
+	var further: bool = field().reaches_beyond(choice)
+	if further:
+		found = _contacts_in(extended_field(allow_rolls), target)[index]
+	if found.is_empty():
+		found = _closest_position(target, choice, extended_field(allow_rolls) if further else field())
+	return found
+
+
+## The best contact routes in `reach` for both route choices (cached).
+func _contacts_in(reach: ReachField, target: ModelState) -> Array:
+	var key: Vector2i = Vector2i(1 if reach == _extended else 0, target.id)
+	if not _contacts.has(key):
+		_contacts[key] = _best_contacts(reach, target)
+	return _contacts[key]
+
+
+## The first other enemy whose 1" zone the route from the charger's position
+## through `path` enters before it enters `target_id`'s, or -1.
 func interposing(path: Array[Vector3], target_id: int) -> int:
 	var target: ModelState = state.get_model(target_id)
 	var others: Array[ModelState] = []
@@ -211,9 +292,10 @@ static func sample_path(start: Vector3, points: Array[Vector3], step: float) -> 
 	return result
 
 
-## The base centre positions in contact with `target` that the charger could
-## stand on, at `angle` around it (ruling 6): on each floor there within the
-## low obstacle height of the target's.
+## The base centre positions in base contact with `target` at `angle` around
+## it (ruling 7): on every floor there where the charger's cylinder would
+## overlap the target's in height. Whether it can stop there is the reach
+## field's to say.
 func contact_points(target: ModelState, angle: float) -> Array[Vector3]:
 	var result: Array[Vector3] = []
 	var r: float = charger.base_radius_inches() + target.base_radius_inches()
@@ -221,44 +303,93 @@ func contact_points(target: ModelState, angle: float) -> Array[Vector3]:
 	var height_field: HeightField = state.height_field()
 	for s: int in height_field.surfaces_at(p):
 		var h: float = height_field.surface_height(s, p)
-		if absf(h - target.position.y) <= TerrainRules.LOW_OBSTACLE_HEIGHT + Transitions.HEIGHT_SLACK:
+		if MeleeZone.heights_overlap(h, charger.height_inches(), target.position.y, target.height_inches()):
 			result.append(Vector3(p.x, h, p.y))
 	return result
 
 
-## Whether the floor of a charger standing at `at` is close enough in height
-## to `target`'s for base contact (ruling 6).
-static func heights_allow_contact(at: Vector3, target: ModelState) -> bool:
-	return absf(at.y - target.position.y) <= TerrainRules.LOW_OBSTACLE_HEIGHT + Transitions.HEIGHT_SLACK
-
-
-## The cheapest path to base contact with `target`: [waypoints, cost], or
-## empty if there is none within max_distance.
-func _best_contact(target: ModelState) -> Array:
-	var reach: ReachField = field()
-	var best_cost: float = INF
-	var best_point: Vector3 = Vector3.INF
-	var best_angle: float = 0.0
+## The cheapest routes in `reach` to base contact with `target`, for both
+## route choices: [rolls not allowed, rolls allowed], each {"path", "length",
+## "contact": true}, or {} if there is none. The angles around the target are
+## sampled once for both (ReachField.estimate_costs()), then each best is
+## refined between its neighbouring samples and priced exactly.
+func _best_contacts(reach: ReachField, target: ModelState) -> Array:
+	var best_cost: Array[float] = [INF, INF]
+	var best_point: Array[Vector3] = [Vector3.INF, Vector3.INF]
+	var best_angle: Array[float] = [0.0, 0.0]
 	var step: float = TAU / CONTACT_SAMPLES
 	for k: int in CONTACT_SAMPLES:
 		var angle: float = k * step
 		for point: Vector3 in contact_points(target, angle):
-			var cost: float = reach.cost_to(point)
-			if cost < best_cost:
-				best_cost = cost
-				best_point = point
-				best_angle = angle
-	if best_cost == INF:
-		return []
-	# Refine between the neighbouring samples.
-	var span: float = step
-	for _refine: int in REFINE_STEPS:
-		span *= 0.5
-		for angle: float in [best_angle - span, best_angle + span]:
-			for point: Vector3 in contact_points(target, angle):
-				var cost: float = reach.cost_to(point)
-				if cost < best_cost - EPSILON:
-					best_cost = cost
-					best_point = point
-					best_angle = angle
-	return [reach.path_to(best_point), best_cost]
+			var costs: Vector2 = reach.estimate_costs(point)
+			for i: int in 2:
+				if costs[i] < best_cost[i]:
+					best_cost[i] = costs[i]
+					best_point[i] = point
+					best_angle[i] = angle
+	var result: Array = []
+	for i: int in 2:
+		if best_cost[i] == INF:
+			result.append({})
+			continue
+		reach.set_route_choice(route_choice(i == 1))
+		var span: float = step
+		for _refine: int in REFINE_STEPS:
+			span *= 0.5
+			for angle: float in [best_angle[i] - span, best_angle[i] + span]:
+				for point: Vector3 in contact_points(target, angle):
+					var cost: float = reach.estimate_cost(point)
+					if cost < best_cost[i] - EPSILON:
+						best_cost[i] = cost
+						best_point[i] = point
+						best_angle[i] = angle
+		var path: Array[Vector3] = reach.path_to(best_point[i])
+		if path.is_empty():
+			result.append({})
+		else:
+			result.append({"path": path, "length": reach.cost_to(best_point[i]), "contact": true})
+	return result
+
+
+## Ruling 6: the route to the position closest to `target`, edge to edge,
+## where the charger can stop (the fewer inches on a tie), searched in
+## `reach`: from the finer field if it reaches that position, else from
+## `reach`. {} if the charger can reach nowhere.
+func _closest_position(target: ModelState, choice: ReachField.RouteChoice, reach: ReachField) -> Dictionary:
+	reach.set_route_choice(choice)
+	var radius: float = charger.base_radius_inches()
+	var height: float = charger.height_inches()
+	var best: Vector3 = Vector3.INF
+	var best_key: Vector2 = Vector2(INF, INF)
+	for k: int in reach.state_count():
+		var reachable: bool = reach.is_state_safe(k) if choice == ReachField.RouteChoice.SAFE_ONLY else reach.is_state_reachable(k)
+		if not reachable:
+			continue
+		var at: Vector3 = reach.state_position(k)
+		var gap: float = MeleeZone.cylinder_gap(at, radius, height, target.position, target.base_radius_inches(), target.height_inches())
+		var cost: float = reach.state_cost(k) if choice == ReachField.RouteChoice.SAFE_ONLY else reach.state_cost_with_rolls(k)
+		var key: Vector2 = Vector2(snappedf(gap, 0.001), cost)
+		if key < best_key:
+			best_key = key
+			best = at
+	if best == Vector3.INF:
+		return {}
+	# Closer than the grid: the closest destination to the target on that floor.
+	var fine: ReachField = field()
+	fine.set_route_choice(choice)
+	var aim: Vector3 = Vector3(target.position.x, best.y, target.position.z)
+	for source: ReachField in [fine, reach]:
+		var refined: Variant = source.closest_destination(aim, Vector2(best.x, best.z).distance_to(Vector2(aim.x, aim.z)) + EPSILON)
+		if refined == null:
+			continue
+		var point: Vector3 = refined
+		var gap: float = MeleeZone.cylinder_gap(point, radius, height, target.position, target.base_radius_inches(), target.height_inches())
+		if gap <= best_key.x + 0.001:
+			best = point
+			best_key.x = gap
+			break
+	for source: ReachField in [fine, reach]:
+		var path: Array[Vector3] = source.path_to(best)
+		if not path.is_empty():
+			return {"path": path, "length": source.cost_to(best), "contact": false}
+	return {}

@@ -156,7 +156,7 @@ func test_needed_roll_for_near_far_and_impossible_targets() -> void:
 	assert_eq(plan_far.needed, 5, "6 + 5 covers 10.74\", 6 + 4 does not")
 	assert_eq(plan_far.label(), "needs 5+")
 	assert_false(plan_far.interposed())
-	assert_almost_eq(_flat_distance(plan_far.contact(), state.get_model(far).position), 2 * R32, 0.001, "ends in base contact")
+	assert_almost_eq(_flat_distance(plan_far.contact_point(), state.get_model(far).position), 2 * R32, 0.001, "ends in base contact")
 
 
 func test_halving_after_standing_up_applies_to_the_whole_sum() -> void:
@@ -169,29 +169,35 @@ func test_halving_after_standing_up_applies_to_the_whole_sum() -> void:
 	# (6 + d) / 2 >= 4.74 needs d >= 3.48; halving only the die would need none.
 	assert_eq(planner.plan(near).needed, 4)
 	var plan_far: ChargePlan = planner.plan(far)
-	assert_eq(plan_far.needed, ChargePlan.OUT_OF_REACH)
-	assert_eq(plan_far.label(), "out of reach")
-	assert_string_contains(plan_far.error, "Out of reach")
+	assert_eq(plan_far.needed, ChargePlan.CANNOT_REACH)
+	assert_eq(plan_far.label(), "cannot reach")
+	assert_eq(plan_far.error, "", "ruling 5 of 008b: it can still be declared")
 
 
-func test_an_out_of_reach_target_cannot_be_declared() -> void:
+func test_a_target_no_d6_reaches_can_be_declared() -> void:
 	var a: int = _place(0, Vector3(24, 0, 24))
 	var far: int = _place(1, Vector3(12, 0, 24))
 	state.get_model(a).down = true
 	TurnHelper.ready_to_act(state, a)
-	assert_string_contains(state.execute(BeginActionCommand.new(0, a, &"charge", far)), "Out of reach")
+	assert_eq(state.execute(BeginActionCommand.new(0, a, &"charge", far)), "", "ruling 5 of 008b (007's refusal withdrawn)")
+	state.undo()
 	assert_string_contains(state.execute(BeginActionCommand.new(0, a, &"charge")), "No such model", "a charge needs a target")
 
 
-func test_a_target_reachable_only_by_a_roll_cannot_be_charged() -> void:
+func test_a_target_on_a_sheer_block_needs_the_route_toggle() -> void:
 	var a: int = _place(0, Vector3(24, 0, 24))
-	# A sheer 2" block: climbing it is a roll, and contact from the ground is
-	# 2" below the target's floor.
+	# A sheer 2" block: climbing it is a roll, and a 1.9" charger on the
+	# ground does not overlap the target in height (ruling 7 of 008b).
 	_piece(Vector2(24, 30), Vector3(4, 2, 4), TerrainPiece.Tag.SHEER)
 	var on_top: int = _place(1, Vector3(24, 2, 30))
-	var high_plan: ChargePlan = _plan(a, on_top)
-	assert_eq(high_plan.needed, ChargePlan.OUT_OF_REACH)
-	assert_false(high_plan.error == "")
+	var safe_plan: ChargePlan = _plan(a, on_top)
+	assert_eq(safe_plan.error, "", "007's refusal withdrawn: it can be declared")
+	assert_false(safe_plan.contact, "no roll-free way to base contact")
+	assert_almost_eq(safe_plan.end().y, 0.0, 0.001, "it heads for the foot of the block (ruling 6)")
+	var risky_plan: ChargePlan = ChargePlanner.new(state, a).plan(on_top, true)
+	assert_true(risky_plan.contact, "with climbs allowed it climbs to contact")
+	assert_almost_eq(risky_plan.end().y, 2.0, 0.001)
+	assert_eq(risky_plan.risky_rolls(), 1)
 	# The same block untagged is an open climb: chargeable.
 	state = GameState.new(7)
 	a = _place(0, Vector3(24, 0, 24))
@@ -199,7 +205,7 @@ func test_a_target_reachable_only_by_a_roll_cannot_be_charged() -> void:
 	on_top = _place(1, Vector3(24, 2, 30))
 	var open_plan: ChargePlan = _plan(a, on_top)
 	assert_eq(open_plan.error, "", "an open climb is no roll")
-	assert_almost_eq(open_plan.contact().y, 2.0, 0.001, "contact on top")
+	assert_almost_eq(open_plan.contact_point().y, 2.0, 0.001, "contact on top")
 
 
 # --- Interposing --------------------------------------------------------------
@@ -214,7 +220,7 @@ func test_an_interposing_model_becomes_the_target() -> void:
 	assert_eq(plan.declared_id, target)
 	assert_eq(plan.target_id, between, "the model in the way is charged instead")
 	assert_true(plan.interposed())
-	assert_almost_eq(_flat_distance(plan.contact(), state.get_model(between).position), 2 * R32, 0.001, "path recomputed to it")
+	assert_almost_eq(_flat_distance(plan.contact_point(), state.get_model(between).position), 2 * R32, 0.001, "path recomputed to it")
 
 
 func test_no_interposer_when_the_path_passes_more_than_an_inch_away() -> void:
@@ -301,7 +307,7 @@ func test_contact_onto_a_low_obstacle() -> void:
 	var on_crate: int = _place(1, Vector3(20, 1, 20), 25)
 	var plan: ChargePlan = _plan(a, on_crate)
 	assert_eq(plan.error, "")
-	assert_almost_eq(plan.contact().y, 1.0, 0.001, "contact on the crate, the base all over it")
+	assert_almost_eq(plan.contact_point().y, 1.0, 0.001, "contact on the crate, the base all over it")
 	_charge(a, on_crate, 6, 6)
 	if state.pending != null:
 		_ok(ChooseContactCommand.new(0, state.pending.default_index))
@@ -315,7 +321,7 @@ func test_contact_from_the_ground_with_a_target_on_a_low_obstacle() -> void:
 	var on_crate: int = _place(1, Vector3(20, 1, 18.9), 25)
 	var plan: ChargePlan = _plan(a, on_crate)
 	assert_eq(plan.error, "")
-	assert_almost_eq(plan.contact().y, 0.0, 0.001, "from the ground, 1\" below")
+	assert_almost_eq(plan.contact_point().y, 0.0, 0.001, "from the ground, 1\" below")
 	assert_almost_eq(plan.length, 18.9 - R25 - R32 - 12, 0.02)
 
 
@@ -335,10 +341,13 @@ func test_contact_refused_across_a_larger_height_difference() -> void:
 	var planner: ChargePlanner = ChargePlanner.new(state, a)
 	var target: ModelState = state.get_model(on_top)
 	# Straight out over the edge (towards -z) the contact point is on the ground, 2" below.
+	# Ruling 7 of 008b: a 1.9" charger on the ground does not reach up to the
+	# feet of a target 2" up.
 	assert_eq(planner.contact_points(target, -PI / 2).size(), 0, "the ground is 2\" below: no contact")
-	assert_false(ChargePlanner.heights_allow_contact(Vector3(24, 0, 27), target))
-	assert_true(ChargePlanner.heights_allow_contact(Vector3(24, 1, 27), target))
-	assert_eq(planner.plan(on_top).needed, ChargePlan.OUT_OF_REACH)
+	var charger: ModelState = state.get_model(a)
+	assert_false(MeleeZone.heights_overlap(0.0, charger.height_inches(), 2.0, target.height_inches()))
+	assert_true(MeleeZone.heights_overlap(1.0, charger.height_inches(), 2.0, target.height_inches()))
+	assert_false(planner.plan(on_top).contact, "no roll-free way to contact")
 
 
 # --- Multi-charge -------------------------------------------------------------

@@ -9,6 +9,8 @@ extends RefCounted
 ## A model may only come within this distance of an enemy by charging.
 const DISTANCE: float = MoveLegality.ENEMY_DISTANCE_INCHES
 const EPSILON: float = 0.0001
+## How closely two bases must touch, seen from above, to be in contact.
+const CONTACT_SLACK: float = 0.01
 
 
 ## The shortest distance between two vertical cylinders standing at `a` and
@@ -22,6 +24,25 @@ static func cylinder_gap(a: Vector3, a_radius: float, a_height: float, b: Vector
 	if vertical <= 0.0:
 		return horizontal
 	return sqrt(horizontal * horizontal + vertical * vertical)
+
+
+## Ruling 7 of brief 008b (movement.md, "Base contact"): whether two upright
+## cylinders overlap in height, so their bases can be in contact: the feet of
+## the one standing higher are below the top of the one standing lower. Just
+## touching (feet exactly at the other's top) is not an overlap.
+static func heights_overlap(a_y: float, a_height: float, b_y: float, b_height: float) -> bool:
+	return maxf(a_y, b_y) < minf(a_y + a_height, b_y + b_height) - EPSILON
+
+
+## Ruling 7 of brief 008b: whether a model of `a_radius` and `a_height` whose
+## base centre is at `a` is in base contact with `b`: the bases touch seen
+## from above (within `slack`) and the cylinders overlap in height. They need
+## not stand on the same level.
+static func in_base_contact(a: Vector3, a_radius: float, a_height: float, b: ModelState, slack: float = CONTACT_SLACK) -> bool:
+	var apart: float = Vector2(a.x, a.z).distance_to(Vector2(b.position.x, b.position.z))
+	if absf(apart - a_radius - b.base_radius_inches()) > slack:
+		return false
+	return heights_overlap(a.y, a_height, b.position.y, b.height_inches())
 
 
 ## The distance between two models' cylinders; `at` puts `a` somewhere else.

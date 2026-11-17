@@ -17,8 +17,13 @@ func needs_target() -> bool:
 
 
 ## For an action with a target: checks `target_id` and works out what taking
-## the action against it means. The plan's error says why it may not be taken.
-func plan_for(_state: GameState, _model: ModelState, _action: ActionDef, target_id: int) -> ActionPlan:
+## the action against it means, with the declared route choice (a charge:
+## whether routes with climbs and jumps are allowed, and the descent mode).
+## The plan's error says why it may not be taken.
+func plan_for(
+	_state: GameState, _model: ModelState, _action: ActionDef, target_id: int, _allow_rolls: bool = false,
+	_descent_mode: Transitions.DescentMode = Transitions.DescentMode.DROP
+) -> ActionPlan:
 	var plan: ActionPlan = ActionPlan.new()
 	plan.target_id = target_id
 	plan.error = "This action takes no target."

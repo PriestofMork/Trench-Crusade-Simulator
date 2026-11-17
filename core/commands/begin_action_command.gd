@@ -10,16 +10,26 @@ var player: int
 var model_id: int
 var action_id: StringName
 var target_id: int = -1
+## For a charge, the route choice declared with it (ruling 2 of brief 008b):
+## whether routes with climbs and jumps are allowed, and how drops of 3" or
+## more are taken. Part of the command, so undo, redo and replay agree.
+var allow_rolls: bool = false
+var descent_mode: Transitions.DescentMode = Transitions.DescentMode.DROP
 
 ## What the action's behaviour worked out for the target, set by validate().
 var _plan: ActionPlan = null
 
 
-func _init(p_player: int, p_model_id: int, p_action_id: StringName, p_target_id: int = -1) -> void:
+func _init(
+	p_player: int, p_model_id: int, p_action_id: StringName, p_target_id: int = -1, p_allow_rolls: bool = false,
+	p_descent_mode: Transitions.DescentMode = Transitions.DescentMode.DROP
+) -> void:
 	player = p_player
 	model_id = p_model_id
 	action_id = p_action_id
 	target_id = p_target_id
+	allow_rolls = p_allow_rolls
+	descent_mode = p_descent_mode
 
 
 ## The plan validate() worked out (a charge's path and needed roll), or null.
@@ -41,7 +51,7 @@ func validate(state: GameState) -> String:
 	var action: ActionDef = state.rules.action(action_id)
 	if not action.behaviour.needs_target():
 		return "" if target_id == -1 else "%s takes no target." % action.label
-	_plan = action.behaviour.plan_for(state, model, action, target_id)
+	_plan = action.behaviour.plan_for(state, model, action, target_id, allow_rolls, descent_mode)
 	return _plan.error
 
 
@@ -64,6 +74,7 @@ func apply(state: GameState) -> Array[GameEvent]:
 	var data: Dictionary = {"action_id": action_id}
 	if target_id != -1:
 		data["target_id"] = target_id
+		data["allow_rolls"] = allow_rolls
 	events.append(GameEvent.new(GameEvent.Kind.ACTION_STARTED, player, model_id, data))
 	action.behaviour.begin(state, model, action, events, plan_used)
 	return events

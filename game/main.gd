@@ -1153,7 +1153,7 @@ func _update_charge_hover() -> void:
 	else:
 		var shown: Array[Vector3] = _charge_display_path(model, plan.path)
 		shown.remove_at(0)
-		_preview.show_preview(model.position, shown, plan.contact(), model.base_radius_inches(), Vector3.UP, not plan.is_certain())
+		_preview.show_preview(model.position, shown, plan.end(), model.base_radius_inches(), Vector3.UP, not plan.is_certain())
 		_preview.show_roll_points([] as Array[Vector3])
 		var text: String = "Charge model %d: %.1f\" - %s" % [target, plan.length, plan.label()]
 		if plan.interposed():
