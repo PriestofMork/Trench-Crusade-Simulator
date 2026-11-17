@@ -12,9 +12,12 @@ extends Node3D
 ## Escape cancels. C (or the HUD button): switch the selected model's descent
 ## mode between Drop and Climb down, which redraws its area. Escape:
 ## deselect. O: override panel.
-## G (or the Charge button): charge mode (brief 007). Every enemy in range is
-## labelled with what the charge needs; hovering one previews the charge
-## path; clicking it asks for confirmation, then the D6 rolls. If the charge
+## G (or the Charge button): charge mode (briefs 007, 008b). Every enemy in
+## range is labelled with what the charge needs ("certain", "needs 4+",
+## "needs 2+, 1 risky roll", "cannot reach"); J (or the button) switches
+## "allow climbs and jumps", C the descent mode; hovering one previews the
+## route, its risky parts orange; clicking it asks for confirmation, then the
+## D6 rolls and the charger moves, rolling on the way. If the charge
 ## reaches with distance to spare, the places it may end are an arc around
 ## the target's base: hover to see who else would be charged, click to pick
 ## (Enter keeps first contact). R (or the Retreat button), in melee: lists
@@ -28,6 +31,8 @@ const TABLE_FILE: String = "res://data/tables/height_test_table.json"
 ## The action a click on the table takes.
 const CLICK_ACTION: StringName = &"move"
 const TRAY_WIDTH: float = 420.0
+## The orange of risky routes, for rich text.
+const GHOST_RISKY_HTML: String = "ff9933"
 
 var state: GameState
 
@@ -70,12 +75,18 @@ var _sight_debug: bool = false
 ## The enemy under the cursor while a model is selected, or -1.
 var _sight_hover: int = -1
 
-## Charge mode (brief 007): on while the selected model picks a target. The
-## plans (by declared target) are worked out on a worker thread.
+## Charge mode (briefs 007, 008b): on while the selected model picks a
+## target. The plans (by declared target, for both route choices: [no rolls,
+## rolls allowed]) are worked out on a worker thread.
 var _charge_mode: bool = false
-var _charge_plans: Dictionary[int, ChargePlan] = {}
+var _charge_plans: Dictionary[int, Array] = {}
 var _charge_task: int = -1
-var _built_plans: Dictionary[int, ChargePlan] = {}
+var _built_plans: Dictionary[int, Array] = {}
+## "Allow climbs and jumps" (ruling 2 of brief 008b): off by default.
+var _charge_rolls: bool = false
+## How long working out the charge options took, ms (both route choices).
+var charge_build_ms: float = 0.0
+var _charge_started_usec: int = 0
 var _built_plans_ready: bool = false
 ## The target the confirmation panel would charge.
 var _charge_target: int = -1
@@ -166,6 +177,8 @@ func _unhandled_input(event: InputEvent) -> void:
 			toggle_charge_mode()
 		elif key.physical_keycode == KEY_R and not key.ctrl_pressed:
 			request_retreat()
+		elif key.physical_keycode == KEY_J and not key.ctrl_pressed:
+			toggle_charge_rolls()
 		elif key.physical_keycode == KEY_C and not key.ctrl_pressed:
 			toggle_descent_mode()
 		elif key.physical_keycode == KEY_O:
@@ -378,8 +391,37 @@ func is_charge_ready() -> bool:
 	return _charge_mode and _charge_task == -1
 
 
+## The plans for the current route choice, by declared target.
 func charge_plans() -> Dictionary[int, ChargePlan]:
-	return _charge_plans
+	var result: Dictionary[int, ChargePlan] = {}
+	for id: int in _charge_plans:
+		result[id] = _charge_plans[id][1 if _charge_rolls else 0]
+	return result
+
+
+## Both route choices' plans for `target_id` ([off, on]), or [].
+func charge_plans_for(target_id: int) -> Array:
+	return _charge_plans.get(target_id, [])
+
+
+func is_charge_rolls() -> bool:
+	return _charge_rolls
+
+
+## Switches "allow climbs and jumps" in charge mode (J): the labels and the
+## preview show the other route choice. Nothing is worked out again.
+func toggle_charge_rolls() -> String:
+	if not _charge_mode:
+		return "Not in charge mode."
+	_charge_rolls = not _charge_rolls
+	if _confirming == &"charge":
+		_close_confirm()
+		_charge_target = -1
+	if _charge_task == -1:
+		_melee_view.show_charge_labels(state, charge_plans())
+	_hud.show_message("Charge routes: climbs and jumps %s." % ("allowed (the shortest route of any kind)" if _charge_rolls else "not allowed (the shortest route with no roll)"))
+	_refresh_all()
+	return ""
 
 
 func toggle_charge_mode() -> String:
@@ -400,19 +442,30 @@ func enter_charge_mode() -> String:
 		return error
 	_unpin()
 	_charge_mode = true
+	_charge_rolls = false
+	_start_charge_plans()
+	return ""
+
+
+## Works out the charge options for the selected model (again, after the
+## descent mode changed).
+func _start_charge_plans() -> void:
 	_charge_plans = {}
 	_charge_target = -1
+	if _confirming == &"charge":
+		_close_confirm()
 	_clear_reach()
 	_wait_for_charge_task()
 	_built_plans_ready = false
+	_melee_view.clear_charge_labels()
 	# The height field and the sight terrain are shared; build them here so
 	# the worker only reads them.
 	state.height_field()
 	state.sight_terrain()
-	_charge_task = WorkerThreadPool.add_task(_build_charges.bind(_selected_id))
+	_charge_started_usec = Time.get_ticks_usec()
+	_charge_task = WorkerThreadPool.add_task(_build_charges.bind(_selected_id, descent_mode()))
 	_hud.show_message("Charge mode: working out the charges…")
 	_refresh_all()
-	return ""
 
 
 func exit_charge_mode() -> void:
@@ -433,12 +486,13 @@ func exit_charge_mode() -> void:
 
 ## On a worker thread: only reads the state, which cannot change while
 ## charge mode is working (nothing is sent until it is ready).
-func _build_charges(charger_id: int) -> void:
-	var planner: ChargePlanner = ChargePlanner.new(state, charger_id)
-	var plans: Dictionary[int, ChargePlan] = {}
-	# Every enemy in range: those the charger cannot see get a "not visible" plan.
+func _build_charges(charger_id: int, mode: Transitions.DescentMode) -> void:
+	var planner: ChargePlanner = ChargePlanner.new(state, charger_id, mode)
+	var plans: Dictionary[int, Array] = {}
+	# Every enemy in range, both route choices: those the charger cannot see
+	# get a "not visible" plan.
 	for target: ModelState in planner.in_range():
-		plans[target.id] = planner.plan(target.id)
+		plans[target.id] = planner.plans(target.id)
 	_built_mutex.lock()
 	_built_plans = plans
 	_built_plans_ready = true
@@ -451,22 +505,25 @@ func _collect_charges() -> void:
 	WorkerThreadPool.wait_for_task_completion(_charge_task)
 	_charge_task = -1
 	_built_mutex.lock()
-	var plans: Dictionary[int, ChargePlan] = _built_plans
+	var plans: Dictionary[int, Array] = _built_plans
 	_built_plans = {}
 	_built_mutex.unlock()
+	charge_build_ms = (Time.get_ticks_usec() - _charge_started_usec) / 1000.0
+	print("Charge options for model %d: %.0f ms (both route choices, %d targets)" % [_selected_id, charge_build_ms, plans.size()])
 	if not _charge_mode:
 		return
 	_charge_plans = plans
-	_melee_view.show_charge_labels(state, plans)
+	var current: Dictionary[int, ChargePlan] = charge_plans()
+	_melee_view.show_charge_labels(state, current)
 	var reachable: int = 0
 	var unseen: int = 0
-	for plan: ChargePlan in plans.values():
+	for plan: ChargePlan in current.values():
 		if plan.reachable():
 			reachable += 1
 		if plan.not_visible:
 			unseen += 1
-	_hud.show_message("Charge mode: %d enemies in range, %d not visible, %d reachable. Hover one to see the path, click to charge. Esc leaves." % [
-		plans.size(), unseen, reachable
+	_hud.show_message("Charge mode: %d enemies in range, %d not visible, %d reachable. Hover one to see the route, click to charge. J: climbs and jumps. Esc leaves." % [
+		current.size(), unseen, reachable
 	])
 
 
@@ -484,8 +541,8 @@ func request_charge(target_id: int) -> String:
 	if not _charge_plans.has(target_id):
 		_hud.show_message("Model %d cannot be charged: it is not an enemy within 12\" ." % target_id)
 		return "Not a target."
-	var plan: ChargePlan = _charge_plans[target_id]
-	if not plan.reachable():
+	var plan: ChargePlan = charge_plans()[target_id]
+	if plan.error != "":
 		_hud.show_message("[color=#%s]%s[/color]" % [UiStyle.BAD_COLOUR.to_html(false), plan.error])
 		return plan.error
 	_charge_target = target_id
@@ -496,8 +553,18 @@ func request_charge(target_id: int) -> String:
 			UiStyle.GOLD_COLOUR.to_html(false), plan.interposers[0], plan.target_id
 		])
 	var model: ModelState = state.get_model(_selected_id)
-	lines.append("%.1f\" to base contact; Movement %s\" + D6 (%s)." % [plan.length, str(model.movement), plan.label()])
-	lines.append("The D6 is rolled once it is declared; the declaration stands whatever the roll.")
+	var to: String = "to base contact" if plan.contact else "to the closest place it can stop (no base contact)"
+	lines.append("%.1f\" %s; Movement %s\" + D6 (%s)." % [plan.length, to, str(model.movement), plan.label()])
+	if not plan.rolls.is_empty():
+		var labels: PackedStringArray = PackedStringArray()
+		for roll: Dictionary in plan.rolls:
+			labels.append(String(roll["label"]))
+		lines.append("[color=#%s]Rolls on the way: %s. A failed roll fails the charge.[/color]" % [
+			GHOST_RISKY_HTML, "  -  ".join(labels)
+		])
+	if not plan.reachable():
+		lines.append("[color=#%s]No D6 result reaches: it moves as far as it can and stops outside every enemy's 1\" zone.[/color]" % UiStyle.BAD_COLOUR.to_html(false))
+	lines.append("Climbs and jumps %s. The D6 is rolled once it is declared; the declaration stands whatever the roll." % ("allowed" if _charge_rolls else "not allowed"))
 	_ask_confirm(&"charge", "\n".join(lines))
 	return ""
 
@@ -508,9 +575,10 @@ func confirm_charge() -> String:
 		return "No charge to confirm."
 	var model: ModelState = state.get_model(_selected_id)
 	var target: int = _charge_target
+	var rolls: bool = _charge_rolls
 	_close_confirm()
 	exit_charge_mode()
-	return send(BeginActionCommand.new(model.player, model.id, &"charge", target))
+	return send(BeginActionCommand.new(model.player, model.id, &"charge", target, rolls, descent_mode()))
 
 
 func _contact_pending() -> bool:
@@ -677,6 +745,10 @@ func toggle_descent_mode() -> void:
 		mode = Transitions.DescentMode.DROP
 	_descent[_selected_id] = mode
 	_hud.show_message("Descent: %s" % _descent_name(mode))
+	if _charge_mode:
+		# The routes depend on it: work them out again, keeping the toggle.
+		_start_charge_plans()
+		return
 	_refresh_all()
 
 
@@ -786,6 +858,9 @@ func _play(event: GameEvent) -> void:
 			_hud.show_message("Model %d: %s (+%d)" % [event.model_id, event.data.get("reason", ""), int(event.data.get("count", 0))])
 		GameEvent.Kind.MOVE_STOPPED:
 			_hud.show_message("Model %d's move stops: %s." % [event.model_id, event.data.get("reason", "")])
+		GameEvent.Kind.LEDGE_ROLL:
+			_tray.set_reason(String(event.data.get("reason", "")))
+			_hud.show_message(String(event.data.get("reason", "")))
 		GameEvent.Kind.ACTIVATION_ENDED:
 			var reason: String = event.data.get("reason", "")
 			if reason in ["failed risky roll", "went Down", "taken Out of Action"]:
@@ -796,20 +871,26 @@ func _play(event: GameEvent) -> void:
 		GameEvent.Kind.OVERRIDE_APPLIED:
 			_hud.show_message("Override: %s" % event.data.get("text", ""))
 		GameEvent.Kind.CHARGE_DECLARED:
-			var text: String = "Model %d charges model %d." % [event.model_id, int(event.data["target_id"])]
+			var text: String = "Model %d charges model %d" % [event.model_id, int(event.data["target_id"])]
 			if event.data.get("interposed", false):
-				text = "Model %d charges model %d (in the way of model %d)." % [
+				text = "Model %d charges model %d (in the way of model %d)" % [
 					event.model_id, int(event.data["target_id"]), int(event.data["declared_id"])
 				]
-			_hud.show_message(text)
+			_hud.show_message("%s: %s." % [text, event.data.get("label", "")])
 		GameEvent.Kind.CHARGE_DISTANCE:
 			var reaches: bool = event.data["reaches"]
 			_tray.show_effect("%s %.1f\" of %.1f\" needed" % [
 				"Charge reaches:" if reaches else "Charge falls short:", float(event.data["distance"]), float(event.data["length"])
 			])
 		GameEvent.Kind.CHARGE_FAILED:
-			_tray.show_effect("Charge failed: %.1f\" of %.1f\"" % [float(event.data["distance"]), float(event.data["length"])])
-			_hud.show_message("Model %d's charge falls short; it stops outside every enemy's 1\" zone." % event.model_id)
+			var why: String = String(event.data.get("reason", ""))
+			if why == "not far enough":
+				_tray.show_effect("Charge failed: %.1f\" of %.1f\"" % [float(event.data["distance"]), float(event.data["length"])])
+				_hud.show_message("Model %d's charge falls short; it stops outside every enemy's 1\" zone." % event.model_id)
+			else:
+				# A roll on the way (or going Down) stopped it: the roll in the tray failed the charge.
+				_tray.show_effect("charge failed")
+				_hud.show_message("Model %d's charge fails: %s." % [event.model_id, why])
 		GameEvent.Kind.CHARGED:
 			var charged: Array = event.data["charged"]
 			_hud.show_message("Model %d is in melee: charged %s." % [
@@ -873,7 +954,8 @@ func _play_fall(event: GameEvent) -> void:
 	shown.append_array(ModelView.jump_arc(from, far, true))
 	shown.append(Vector3(over.x, to.y, over.z))
 	shown.append(to)
-	_hud.show_message("Model %d falls %.1f\"." % [event.model_id, float(event.data["height"])])
+	var cause: String = String(event.data.get("reason", ""))
+	_hud.show_message("Model %d falls %.1f\"%s." % [event.model_id, float(event.data["height"]), " (%s)" % cause if cause != "" else ""])
 	_clear_reach()
 	_playing = true
 	_views[event.model_id].slide_along(shown, func() -> void:
@@ -914,7 +996,7 @@ func _refresh_all() -> void:
 		var view: ModelView = _views[model.id]
 		view.sync(model)
 		view.show_status(model, state.turn.has_activated(model.id), state.turn.active_model_id == model.id, MeleeZone.in_melee(state, model))
-	_hud.refresh(state, _selected_id, descent_mode(), _attack_order, _charge_mode)
+	_hud.refresh(state, _selected_id, descent_mode(), _attack_order, _charge_mode, _charge_rolls)
 	_hud.show_sight_toggles(_sight_overview, _sight_debug)
 	_overrides.refresh(state, _selected_id)
 	_refresh_reach()
@@ -1145,16 +1227,24 @@ func _update_charge_hover() -> void:
 		_preview.hide_all()
 		_distance_label.visible = false
 		return
-	var plan: ChargePlan = _charge_plans[target]
+	var plan: ChargePlan = charge_plans()[target]
 	var model: ModelState = state.get_model(_selected_id)
-	if not plan.reachable():
+	if plan.path.is_empty():
 		_preview.hide_all()
 		_distance_label.text = "Model %d: %s" % [target, plan.label()]
 	else:
-		var shown: Array[Vector3] = _charge_display_path(model, plan.path)
+		var drawn: Array = _charge_display_path(model, plan)
+		var shown: Array[Vector3] = drawn[0]
 		shown.remove_at(0)
-		_preview.show_preview(model.position, shown, plan.end(), model.base_radius_inches(), Vector3.UP, not plan.is_certain())
-		_preview.show_roll_points([] as Array[Vector3])
+		var risky_parts: Array[bool] = drawn[1]
+		_preview.show_preview(
+			model.position, shown, plan.end(), model.base_radius_inches(), Vector3.UP, not plan.rolls.is_empty(),
+			risky_parts, not plan.reachable()
+		)
+		var roll_points: Array[Vector3] = []
+		for roll: Dictionary in plan.rolls:
+			roll_points.append(roll["at"])
+		_preview.show_roll_points(roll_points)
 		var text: String = "Charge model %d: %.1f\" - %s" % [target, plan.length, plan.label()]
 		if plan.interposed():
 			text = "Model %d is in the way of model %d: charges it instead\n%.1f\" - %s" % [plan.interposers[0], target, plan.length, plan.label()]
@@ -1163,16 +1253,22 @@ func _update_charge_hover() -> void:
 	_distance_label.visible = true
 
 
-## A charge path as drawn: climbs straight up and down (see _shown_path()).
-func _charge_display_path(model: ModelState, path: Array[Vector3]) -> Array[Vector3]:
-	var legality: MoveLegality = ChargePlanner.legality_for(state, model)
-	var points: Array[Vector3] = [model.position]
-	points.append_array(path)
-	var kinds: Array = []
-	for i: int in range(1, points.size()):
-		legality.segment_cost(points[i - 1], points[i])
-		kinds.append(legality.last_kind)
-	return _shown_path(points, kinds)
+## A charge route as drawn: climbs straight up and down (see _shown_path()),
+## and which drawn parts need a roll: [points, Array[bool] per drawn segment].
+func _charge_display_path(model: ModelState, plan: ChargePlan) -> Array:
+	var legality: MoveLegality = ChargePlanner.legality_for(state, model, plan.allow_rolls, plan.descent_mode)
+	var shown: Array[Vector3] = [model.position]
+	var risky: Array[bool] = []
+	var previous: Vector3 = model.position
+	for point: Vector3 in plan.path:
+		legality.segment_cost(previous, point)
+		var part: Array[Vector3] = _shown_path([previous, point] as Array[Vector3], [legality.last_kind])
+		var needs_roll: bool = Transitions.needs_roll(legality.last_kind)
+		for i: int in range(1, part.size()):
+			shown.append(part[i])
+			risky.append(needs_roll)
+		previous = point
+	return [shown, risky]
 
 
 ## The contact choice: the arc position nearest the cursor, the base it
@@ -1483,6 +1579,7 @@ func _build_overlays() -> void:
 	_hud.undo_pressed.connect(func() -> void: undo())
 	_hud.redo_pressed.connect(func() -> void: redo())
 	_hud.descent_pressed.connect(func() -> void: toggle_descent_mode())
+	_hud.charge_rolls_pressed.connect(func() -> void: toggle_charge_rolls())
 	_hud.attacker_picked.connect(func(id: int) -> void: pick_attacker(id))
 	_hud.sight_overview_pressed.connect(func() -> void: toggle_sight_overview())
 	_hud.sight_debug_pressed.connect(func() -> void: toggle_sight_debug())

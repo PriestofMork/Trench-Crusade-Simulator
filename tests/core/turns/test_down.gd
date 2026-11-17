@@ -314,3 +314,26 @@ func test_ledge_rolls_take_marker_spending_and_undo_across_them() -> void:
 	assert_eq(state.active_roll.request.label, "Ledge roll")
 	assert_eq(state.get_model(a).position, before)
 	assert_false(state.get_model(a).down)
+
+
+func test_the_down_result_override_goes_through_the_ledge_roll() -> void:
+	var a: int = _on_block(0.5)
+	_ok(StartGameCommand.new())
+	TurnHelper.settle(state)
+	_rig([FAILURE, INJURY_PLUS1_BLOOD])
+	var events: Array[GameEvent] = _ok(DownResultOverride.new(a))
+	assert_eq(_count(events, E.LEDGE_ROLL), 1)
+	assert_not_null(_find(events, E.MODEL_FELL), "over the ledge")
+	assert_true(state.get_model(a).down)
+	assert_true(state.undo())
+	assert_false(state.get_model(a).down)
+	assert_eq(state.get_model(a).position.y, 3.0)
+
+
+func test_the_down_result_override_by_a_one_inch_step_makes_no_ledge_roll() -> void:
+	var a: int = _on_block(0.2, 1.0)
+	_ok(StartGameCommand.new())
+	TurnHelper.settle(state)
+	var events: Array[GameEvent] = _ok(DownResultOverride.new(a))
+	assert_eq(_count(events, E.LEDGE_ROLL), 0)
+	assert_true(state.get_model(a).down)

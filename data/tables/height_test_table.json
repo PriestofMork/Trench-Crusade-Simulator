@@ -1,5 +1,5 @@
 {
-	"description": "Test table for briefs 004, 006 (height) and 007 (charge). The block x > 34, 10 < z < 23 holds the charge cases: a charger (15) with a clear target (16), a multi-charge pair (17, 18), a target on a 1in crate (19) and one on a sheer 2in wall (20); a charger (21) whose path to 22 runs past an interposer (23); a model in melee with two enemies (24 with 25, 26). The block 2 < x < 22, 16.5 < z < 24 holds the sight cases (brief 008): a viewer (27); 28 behind a 3in wall; 29 seen over a low wall; 30 hidden behind 29; 31 in the open; 32 behind a see-through screen; 33 on a ramp, tilted. 3 on the 2in platform looks down. The strip z < 10 holds the pieces for rolls (brief 006): two 4in platforms 2.5in apart, ledges of unequal height with a gap, a 5in platform to drop from, a gap too wide to jump. The 4in block and the sheer 2in wall are in the middle row. Sizes are [own x, height, own z] in inches; centre is the footprint centre [x, z]; turn is degrees about the vertical axis; base is the underside height.",
+	"description": "Test table for briefs 004, 006 (height) and 007 (charge). The block x > 34, 10 < z < 23 holds the charge cases: a charger (15) with a clear target (16), a multi-charge pair (17, 18), a target on a 1in crate (19) and one on a sheer 2in wall (20); a charger (21) whose path to 22 runs past an interposer (23); a model in melee with two enemies (24 with 25, 26). The block 2 < x < 22, 16.5 < z < 24 holds the sight cases (brief 008): a viewer (27); 28 behind a 3in wall; 29 seen over a low wall; 30 hidden behind 29; 31 in the open; 32 behind a see-through screen; 33 on a ramp, tilted. 3 on the 2in platform looks down. The strip z < 10 holds the pieces for rolls (brief 006): two 4in platforms 2.5in apart, ledges of unequal height with a gap, a 5in platform to drop from, a gap too wide to jump. The 4in block and the sheer 2in wall are in the middle row. Brief 008b: in 8 < x < 22, 28 < z < 35 a charger (34) with a target (35) on a 1in pillar no wider than its base and one (36) on a sheer 3in block whose east neighbour is an open 3in block (the long roll-free way round); in 37 < x < 46, 30 < z < 33 a charger (37) on a 3in platform with a target (38) across a 1.5in gap; in 27 < x < 34, 17 < z < 21 a target (42) on a 2in step next to open ground and a 40 mm charger (43); along z > 44 a model (39) on a 6in tower above a narrow 3in step (dropping onto it lands within 1in of its ledge), a model (40) within 1in of the edge of a 3in block (a ledge) and one (41) by the edge of a 1in step (no ledge). Sizes are [own x, height, own z] in inches; centre is the footprint centre [x, z]; turn is degrees about the vertical axis; base is the underside height.",
 	"terrain": [
 		{"name": "ramp to platform", "center": [8, 14], "size": [6, 2, 3], "shape": "ramp"},
 		{"name": "platform 2in", "center": [14, 14], "size": [6, 2, 6]},
@@ -31,7 +31,17 @@
 		{"name": "sight wall 3in", "center": [6.5, 20.5], "size": [0.5, 3, 4]},
 		{"name": "sight low wall", "center": [13.5, 20.5], "size": [0.4, 0.8, 3]},
 		{"name": "see-through screen", "center": [9.5, 19.2], "size": [3, 3, 0.4], "blocks_sight": false},
-		{"name": "sight ramp", "center": [19.5, 18], "size": [4, 1.5, 2.5], "shape": "ramp"}
+		{"name": "sight ramp", "center": [19.5, 18], "size": [4, 1.5, 2.5], "shape": "ramp"},
+		{"name": "pillar 1in", "center": [10, 30], "size": [1, 2.5, 1]},
+		{"name": "charge sheer block 3in", "center": [17, 30], "size": [3, 3, 3], "tag": "sheer"},
+		{"name": "charge open block 3in", "center": [20, 30], "size": [3, 3, 3]},
+		{"name": "gap platform west 3in", "center": [39, 31.5], "size": [3, 3, 3]},
+		{"name": "gap platform east 3in", "center": [43.5, 31.5], "size": [3, 3, 3]},
+		{"name": "charge step 2in", "center": [29, 19], "size": [3, 2, 4]},
+		{"name": "ledge tower 6in", "center": [5.5, 46], "size": [3, 6, 3]},
+		{"name": "narrow step 3in", "center": [8, 46], "size": [2, 3, 3]},
+		{"name": "ledge block 3in", "center": [14, 45.75], "size": [4, 3, 3]},
+		{"name": "step 1in", "center": [20, 45.75], "size": [4, 1, 3]}
 	],
 	"models": [
 		{"name": "ramp walker", "player": 0, "at": [4.3, 0, 14], "base": 32, "movement": 8},
@@ -66,6 +76,16 @@
 		{"name": "hidden by 29", "player": 1, "at": [19, 0, 20.5], "base": 25, "movement": 6},
 		{"name": "in the open", "player": 1, "at": [12, 0, 23.3], "base": 32, "movement": 6},
 		{"name": "behind the screen", "player": 1, "at": [9, 0, 17.8], "base": 32, "movement": 6},
-		{"name": "on the sight ramp", "player": 1, "at": [19.5, 0.75, 18], "base": 32, "movement": 6}
+		{"name": "on the sight ramp", "player": 1, "at": [19.5, 0.75, 18], "base": 32, "movement": 6},
+		{"name": "pillar and wall charger", "player": 0, "at": [16, 0, 34], "base": 32, "movement": 6},
+		{"name": "on the pillar", "player": 1, "at": [10, 2.5, 30], "base": 25, "movement": 5},
+		{"name": "on the sheer block", "player": 1, "at": [16.5, 3, 30], "base": 25, "movement": 5},
+		{"name": "gap charger", "player": 0, "at": [39, 3, 31.5], "base": 32, "movement": 6},
+		{"name": "across the gap", "player": 1, "at": [43.8, 3, 31.5], "base": 32, "movement": 6},
+		{"name": "ledge dropper", "player": 0, "at": [5.5, 6, 46], "base": 32, "movement": 6},
+		{"name": "by a ledge", "player": 1, "at": [15, 3, 45.75], "base": 32, "movement": 6},
+		{"name": "by a 1in step", "player": 1, "at": [21, 1, 45.75], "base": 32, "movement": 6},
+		{"name": "on the 2in step", "player": 1, "at": [29.75, 2, 19], "base": 40, "movement": 6},
+		{"name": "step charger", "player": 0, "at": [32.5, 0, 20], "base": 40, "movement": 6}
 	]
 }

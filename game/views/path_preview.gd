@@ -4,7 +4,8 @@ extends Node3D
 ## its climbs and drops drawn as vertical parts, and a ghost of the base at the
 ## destination (lying on its floor), blue if it can go there, orange if only
 ## with rolls, red if not. A route with rolls shows a numbered marker at each
-## roll point, in the order they are rolled.
+## roll point, in the order they are rolled; given which parts of the drawn
+## path need a roll, those parts are drawn orange (a charge route, brief 008b).
 
 const PATH_COLOUR: Color = Color(0.85, 0.94, 1.0, 1.0)
 const RISKY_PATH_COLOUR: Color = Color(1.0, 0.82, 0.55, 1.0)
@@ -19,6 +20,7 @@ const HEIGHT: float = 0.03
 const RING_SEGMENTS: int = 64
 
 var _path_mesh: MeshInstance3D
+var _risky_mesh: MeshInstance3D
 var _ghost_fill: MeshInstance3D
 var _ghost_ring: MeshInstance3D
 var _fill_material: StandardMaterial3D
@@ -33,6 +35,7 @@ func _init() -> void:
 	name = "PathPreview"
 	_path_material = _make_material(PATH_COLOUR, 3)
 	_path_mesh = _make_child("Path", _path_material)
+	_risky_mesh = _make_child("RiskyPath", _make_material(GHOST_RISKY_COLOUR, 3))
 	_marker_material = _make_material(MARKER_COLOUR, 4)
 	_marker_material.no_depth_test = true
 	_fill_material = _make_material(GHOST_OK_COLOUR, 2)
@@ -44,6 +47,7 @@ func _init() -> void:
 
 func hide_all() -> void:
 	_path_mesh.visible = false
+	_risky_mesh.visible = false
 	_ghost_fill.visible = false
 	_ghost_ring.visible = false
 	for marker: Node3D in _markers:
@@ -84,17 +88,20 @@ func show_roll_points(points: Array[Vector3]) -> void:
 ## Shows the ghost base at `destination` and, if `path` is not empty, the path
 ## from `start` through it (points as they should be drawn, vertical parts
 ## included). `floor_normal` is the up direction of the floor at the destination.
+## `risky_parts`, if given, says per drawn segment (start first) whether it
+## needs a roll: those are drawn orange, the rest as a safe path. `cannot`
+## shows the ghost as not reachable even with a path (a hopeless charge).
 func show_preview(
 	start: Vector3, path: Array[Vector3], destination: Vector3, base_radius: float,
-	floor_normal: Vector3 = Vector3.UP, risky: bool = false
+	floor_normal: Vector3 = Vector3.UP, risky: bool = false, risky_parts: Array[bool] = [], cannot: bool = false
 ) -> void:
 	if not is_equal_approx(base_radius, _radius):
 		_radius = base_radius
 		_ghost_fill.mesh = _disc_mesh(base_radius)
 		_ghost_ring.mesh = _ring_mesh(base_radius)
 	var reachable: bool = not path.is_empty()
-	var colour: Color = (GHOST_RISKY_COLOUR if risky else GHOST_OK_COLOUR) if reachable else GHOST_BAD_COLOUR
-	_path_material.albedo_color = RISKY_PATH_COLOUR if risky else PATH_COLOUR
+	var colour: Color = (GHOST_RISKY_COLOUR if risky else GHOST_OK_COLOUR) if reachable and not cannot else GHOST_BAD_COLOUR
+	_path_material.albedo_color = RISKY_PATH_COLOUR if risky and risky_parts.is_empty() else PATH_COLOUR
 	_fill_material.albedo_color = Color(colour, 0.22)
 	_ring_material.albedo_color = Color(colour, 0.95)
 	var tilt: Basis = Basis(Quaternion(Vector3.UP, floor_normal.normalized()))
@@ -103,19 +110,36 @@ func show_preview(
 	_ghost_ring.transform = Transform3D(tilt, at)
 	_ghost_fill.visible = true
 	_ghost_ring.visible = true
+	_risky_mesh.visible = false
 	if reachable:
 		var points: Array[Vector3] = [start]
 		points.append_array(path)
-		_path_mesh.mesh = _polyline_mesh(points)
+		if risky_parts.is_empty():
+			_path_mesh.mesh = _polyline_mesh(points)
+		else:
+			var safe: Array[bool] = []
+			for part: bool in risky_parts:
+				safe.append(not part)
+			_path_mesh.mesh = _polyline_mesh(points, safe)
+			_risky_mesh.mesh = _polyline_mesh(points, risky_parts)
+			_risky_mesh.visible = true
 		_path_mesh.visible = true
 	else:
 		_path_mesh.visible = false
 
 
-func _polyline_mesh(points: Array[Vector3]) -> ArrayMesh:
+## Whether risky parts of the path are drawn (for scripted checks).
+func shows_risky_parts() -> bool:
+	return _risky_mesh.visible and _risky_mesh.mesh != null and _risky_mesh.mesh.get_surface_count() > 0
+
+
+## A ribbon along `points`; with `only`, just the segments marked true.
+func _polyline_mesh(points: Array[Vector3], only: Array[bool] = []) -> ArrayMesh:
 	var vertices: PackedVector3Array = PackedVector3Array()
 	var half: float = PATH_WIDTH * 0.5
 	for i: int in points.size() - 1:
+		if not only.is_empty() and (i >= only.size() or not only[i]):
+			continue
 		var a: Vector3 = points[i] + Vector3(0, HEIGHT, 0)
 		var b: Vector3 = points[i + 1] + Vector3(0, HEIGHT, 0)
 		var along: Vector3 = b - a

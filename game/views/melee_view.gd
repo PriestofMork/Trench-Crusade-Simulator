@@ -2,7 +2,7 @@ class_name MeleeView
 extends Node3D
 ## What brief 007 adds to the table: links between models in melee, the
 ## faint 1" zones of the enemies of a model selected for movement, the
-## labels of charge mode ("certain", "needs 3+", "out of reach", or the
+## labels of charge mode ("certain", "needs 3+", "cannot reach", or the
 ## model actually charged), and the arc of contact positions a charger may
 ## end on. Only displays what it is given; it never changes the state.
 

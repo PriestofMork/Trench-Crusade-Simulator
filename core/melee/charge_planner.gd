@@ -47,6 +47,12 @@ const NOT_VISIBLE_ERROR: String = "The charger cannot see model %d."
 ## the second, coarser reach field goes this far (ruling 5).
 const EXTENDED_DISTANCE: float = 18.0
 const EXTENDED_CELL: float = 0.5
+## Ruling 6, the search for the closest place to the target: how many grid
+## positions are tried, how finely the edge is found, and how much closer
+## counts (else the cheaper wins).
+const CLOSEST_CANDIDATES: int = 24
+const CLOSEST_HALVINGS: int = 9
+const CLOSE_TIE: float = 0.01
 
 var state: GameState
 var charger: ModelState
@@ -359,37 +365,60 @@ func _closest_position(target: ModelState, choice: ReachField.RouteChoice, reach
 	reach.set_route_choice(choice)
 	var radius: float = charger.base_radius_inches()
 	var height: float = charger.height_inches()
-	var best: Vector3 = Vector3.INF
-	var best_key: Vector2 = Vector2(INF, INF)
+	var safe: bool = choice == ReachField.RouteChoice.SAFE_ONLY
+	# The least gap any grid position reaches, then the cheapest position
+	# within a cell of it (so of several equally close sides, the near one).
+	var gaps: PackedFloat64Array = PackedFloat64Array()
+	gaps.resize(reach.state_count())
+	var least: float = INF
 	for k: int in reach.state_count():
-		var reachable: bool = reach.is_state_safe(k) if choice == ReachField.RouteChoice.SAFE_ONLY else reach.is_state_reachable(k)
-		if not reachable:
+		gaps[k] = INF
+		if not (reach.is_state_safe(k) if safe else reach.is_state_reachable(k)):
 			continue
-		var at: Vector3 = reach.state_position(k)
-		var gap: float = MeleeZone.cylinder_gap(at, radius, height, target.position, target.base_radius_inches(), target.height_inches())
-		var cost: float = reach.state_cost(k) if choice == ReachField.RouteChoice.SAFE_ONLY else reach.state_cost_with_rolls(k)
-		var key: Vector2 = Vector2(snappedf(gap, 0.001), cost)
-		if key < best_key:
-			best_key = key
-			best = at
-	if best == Vector3.INF:
+		gaps[k] = MeleeZone.cylinder_gap(
+			reach.state_position(k), radius, height, target.position, target.base_radius_inches(), target.height_inches()
+		)
+		least = minf(least, gaps[k])
+	if least == INF:
 		return {}
-	# Closer than the grid: the closest destination to the target on that floor.
+	# The grid positions within a cell of it, cheapest first: each is then
+	# moved straight towards the target, on its floor, as far as it can still
+	# stop (the edge found by halving), and the closest end wins; of equally
+	# close ones (within CLOSE_TIE), the cheaper.
+	var near: Array[Vector2] = []
+	for k: int in reach.state_count():
+		if gaps[k] <= least + reach.cell_size:
+			near.append(Vector2(reach.state_cost(k) if safe else reach.state_cost_with_rolls(k), k))
+	near.sort()
 	var fine: ReachField = field()
 	fine.set_route_choice(choice)
-	var aim: Vector3 = Vector3(target.position.x, best.y, target.position.z)
+	var aim: Vector2 = Vector2(target.position.x, target.position.z)
+	var point: Vector3 = Vector3.INF
+	var point_key: Vector2 = Vector2(INF, INF)
+	for entry: Vector2 in near.slice(0, CLOSEST_CANDIDATES):
+		var k: int = int(entry.y)
+		var at: Vector3 = reach.state_position(k)
+		var surface: int = reach.state_surface(k)
+		var inside: Vector2 = Vector2(at.x, at.z)
+		var outside: Vector2 = aim
+		for _halve: int in CLOSEST_HALVINGS:
+			var middle: Vector2 = (inside + outside) * 0.5
+			var q: Vector3 = reach.legality.on_surface(middle, surface)
+			if fine.is_reachable(q) or reach.is_reachable(q):
+				inside = middle
+			else:
+				outside = middle
+		var end: Vector3 = reach.legality.on_surface(inside, surface)
+		var gap: float = MeleeZone.cylinder_gap(end, radius, height, target.position, target.base_radius_inches(), target.height_inches())
+		var cost: float = fine.estimate_cost(end)
+		if cost == INF:
+			cost = reach.estimate_cost(end)
+		var key: Vector2 = Vector2(snappedf(gap, CLOSE_TIE), cost)
+		if key < point_key:
+			point_key = key
+			point = end
 	for source: ReachField in [fine, reach]:
-		var refined: Variant = source.closest_destination(aim, Vector2(best.x, best.z).distance_to(Vector2(aim.x, aim.z)) + EPSILON)
-		if refined == null:
-			continue
-		var point: Vector3 = refined
-		var gap: float = MeleeZone.cylinder_gap(point, radius, height, target.position, target.base_radius_inches(), target.height_inches())
-		if gap <= best_key.x + 0.001:
-			best = point
-			best_key.x = gap
-			break
-	for source: ReachField in [fine, reach]:
-		var path: Array[Vector3] = source.path_to(best)
+		var path: Array[Vector3] = source.path_to(point)
 		if not path.is_empty():
-			return {"path": path, "length": source.cost_to(best), "contact": false}
+			return {"path": path, "length": source.cost_to(point), "contact": false}
 	return {}

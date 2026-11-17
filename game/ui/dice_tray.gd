@@ -35,8 +35,12 @@ var _on_done: Callable = Callable()
 var _ended_activation: bool = false
 ## The counts picked so far in a prompt with several options.
 var _picked: Array[int] = []
-## What an injury roll did, in words (shown under the outcome).
+## What an injury roll did, in words (shown under the outcome); for a
+## success roll, what its result led to (a charge failing).
 var _effect: String = ""
+## Why the next roll is made (a ledge roll), and why the current one is.
+var _next_reason: String = ""
+var _reason: String = ""
 
 
 func _init() -> void:
@@ -82,6 +86,8 @@ func begin(roll: ActiveRoll) -> void:
 	_choice_lines.clear()
 	_ended_activation = false
 	_effect = ""
+	_reason = _next_reason
+	_next_reason = ""
 	var request: RollRequest = roll.request
 	var who: String = "both players" if request.roller < 0 else UiStyle.player_bb(request.roller)
 	var model_text: String = "" if request.actor_id < 0 else ", model %d" % request.actor_id
@@ -93,6 +99,12 @@ func begin(roll: ActiveRoll) -> void:
 	_hint.visible = false
 	_show_breakdown(roll.modifiers)
 	visible = true
+
+
+## Why the next roll is made, shown with it (LEDGE_ROLL: a line saying why
+## the ledge roll is rolled).
+func set_reason(text: String) -> void:
+	_next_reason = text
 
 
 ## ROLL_CHOICE_MADE: the answer goes into the breakdown.
@@ -360,6 +372,8 @@ func _show_outcome() -> void:
 			text = "[color=#%s]Failure[/color]" % UiStyle.BAD_COLOUR.to_html(false)
 	if (request.kind == RollRequest.Kind.INJURY or request.kind == RollRequest.Kind.D6) and _effect != "":
 		text = "[color=#%s]%s[/color]" % [UiStyle.GOLD_COLOUR.to_html(false), _effect]
+	elif _effect != "":
+		text += "  [color=#%s]— %s[/color]" % [UiStyle.BAD_COLOUR.to_html(false), _effect]
 	if _ended_activation:
 		text += "  [color=#%s]— activation ends[/color]" % UiStyle.BAD_COLOUR.to_html(false)
 	_outcome.text = text
@@ -372,6 +386,8 @@ func _show_breakdown(modifiers: Array[RollModifier]) -> void:
 		return
 	var request: RollRequest = _roll.request
 	var lines: PackedStringArray = PackedStringArray()
+	if _reason != "":
+		lines.append("[color=#%s]%s[/color]" % [UiStyle.GOLD_COLOUR.to_html(false), _reason])
 	match request.kind:
 		RollRequest.Kind.ROLL_OFF:
 			lines.append("One d6 each, the higher wins")

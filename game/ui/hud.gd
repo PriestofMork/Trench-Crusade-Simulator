@@ -12,6 +12,8 @@ signal roll_off_pressed
 signal undo_pressed
 signal redo_pressed
 signal descent_pressed
+## Charge mode: "allow climbs and jumps" switched (brief 008b).
+signal charge_rolls_pressed
 ## FREE_ATTACK_ORDER: the enemy player picked the next attacker.
 signal attacker_picked(attacker_id: int)
 signal sight_overview_pressed
@@ -33,6 +35,7 @@ var _help: Label
 var _action_buttons: Dictionary[StringName, Button] = {}
 var _undo_button: Button
 var _descent_button: Button
+var _charge_rolls_button: Button
 var _redo_button: Button
 var _sight_overview_button: Button
 var _sight_debug_button: Button
@@ -98,6 +101,12 @@ func _init() -> void:
 	_descent_button.tooltip_text = "How drops of 3\" or more are taken: Drop (free, injury roll) or Climb down (pays the height, risky roll). C switches."
 	_descent_button.pressed.connect(func() -> void: descent_pressed.emit())
 	model_box.add_child(_descent_button)
+	_charge_rolls_button = UiStyle.button("Climbs and jumps: off (J)", "ChargeRollsButton")
+	_charge_rolls_button.toggle_mode = true
+	_charge_rolls_button.tooltip_text = "Charge route: off takes the shortest route with no roll; on the shortest route of any kind (sheer climbs, jumps, drops of 3\" or more). J switches."
+	_charge_rolls_button.pressed.connect(func() -> void: charge_rolls_pressed.emit())
+	_charge_rolls_button.visible = false
+	model_box.add_child(_charge_rolls_button)
 	_stay_button = UiStyle.button("Finish move", "StayButton")
 	_stay_button.tooltip_text = "End the move here; movement left over is lost"
 	_stay_button.pressed.connect(func() -> void: stay_pressed.emit())
@@ -147,12 +156,16 @@ func _process(_delta: float) -> void:
 
 ## Redraws everything from the state. `selected_id` is the previewed model
 ## or -1; `attack_order` the attackers picked so far for a FREE_ATTACK_ORDER
-## decision; `charge_mode` whether the selected model is picking a charge target.
+## decision; `charge_mode` whether the selected model is picking a charge
+## target, and `charge_rolls` whether its routes may climb and jump.
 func refresh(
 	state: GameState, selected_id: int, descent: Transitions.DescentMode = Transitions.DescentMode.DROP,
-	attack_order: Array[int] = [], charge_mode: bool = false
+	attack_order: Array[int] = [], charge_mode: bool = false, charge_rolls: bool = false
 ) -> void:
 	_descent_button.text = "Descent: %s (C)" % ("Climb down" if descent == Transitions.DescentMode.CLIMB_DOWN else "Drop")
+	_charge_rolls_button.visible = charge_mode
+	_charge_rolls_button.set_pressed_no_signal(charge_rolls)
+	_charge_rolls_button.text = "Climbs and jumps: %s (J)" % ("on" if charge_rolls else "off")
 	refresh_status(state)
 	_refresh_prompt(state, attack_order)
 	_refresh_model(state, selected_id, charge_mode)
@@ -285,7 +298,7 @@ func _refresh_model(state: GameState, selected_id: int, charge_mode: bool = fals
 			UiStyle.GOLD_COLOUR.to_html(false), ", ".join(melee.map(func(id: int) -> String: return "model %d" % id))
 		])
 	if charge_mode:
-		lines.append("[color=#%s]Charge mode[/color]: click an enemy to charge it (G or Esc to leave)." % UiStyle.GOLD_COLOUR.to_html(false))
+		lines.append("[color=#%s]Charge mode[/color]: click an enemy to charge it (G or Esc to leave; J: climbs and jumps)." % UiStyle.GOLD_COLOUR.to_html(false))
 	if not t.actions_used.is_empty() and t.active_model_id == model.id:
 		lines.append("Used: %s" % ", ".join(t.actions_used.map(func(id: StringName) -> String: return state.rules.action(id).label)))
 	_model_details.text = "\n".join(lines)

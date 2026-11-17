@@ -1,6 +1,7 @@
 class_name OverridePanel
 extends PanelContainer
 ## Manual override for the selected model (toggled with O): markers, Down,
+## a Down result (through the rules, with the ledge roll),
 ## and each warband's "all success rolls risky" flag. Builds override
 ## commands and hands them to `send`; it never changes the state itself.
 
@@ -11,6 +12,7 @@ var _title: RichTextLabel
 var _model_box: VBoxContainer
 var _counts: Dictionary[StringName, Label] = {}
 var _down: Button
+var _down_result: Button
 var _risky: Array[Button] = []
 var _model_id: int = -1
 var _refreshing: bool = false
@@ -50,6 +52,10 @@ func _init() -> void:
 	_down.toggle_mode = true
 	_down.toggled.connect(_on_down)
 	_model_box.add_child(_down)
+	_down_result = UiStyle.button("Down result (ledge roll if near a ledge)", "DownResult")
+	_down_result.tooltip_text = "Apply a Down result as a rule would: next to a ledge the model first makes the ledge roll"
+	_down_result.pressed.connect(_on_down_result)
+	_model_box.add_child(_down_result)
 	box.add_child(HSeparator.new())
 	for player: int in 2:
 		var risky: Button = UiStyle.button("", "Risky%d" % player)
@@ -102,6 +108,12 @@ func _on_down(pressed: bool) -> void:
 	if _refreshing or _model_id == -1 or not send.is_valid():
 		return
 	send.call(SetDownOverride.new(_model_id, pressed))
+
+
+func _on_down_result() -> void:
+	if _model_id == -1 or not send.is_valid():
+		return
+	send.call(DownResultOverride.new(_model_id))
 
 
 func _on_risky(pressed: bool, player: int) -> void:
