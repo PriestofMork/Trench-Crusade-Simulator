@@ -28,6 +28,7 @@ Open a new session in this folder and say:
 | `007-charge-melee-retreat.md` | Done |
 | `008-line-of-sight.md` | Done |
 | `008b-charge-corrections-and-down.md` | Done |
+| `008c-charge-planning-on-demand.md` | Ready |
 
 ## Planned next (not yet written)
 
