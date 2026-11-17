@@ -1,8 +1,9 @@
 class_name StagedMove
 extends Resolution
-## A move step with rolls in it, part-way through (see MoveExecution). Lives
-## on GameState.resolution from the first roll point until the move ends;
-## undo snapshots copy it, so stepping back restores it exactly.
+## A move step part-way through (see MoveExecution): every move of every
+## action (Move, Dash, Retreat, Charge, sliding in contact) is one of these.
+## Lives on GameState.resolution while the move waits for a roll; undo
+## snapshots copy it, so stepping back restores it exactly.
 
 ## Waiting for nothing (between stages).
 const NOT_WAITING: StringName = &""
@@ -32,6 +33,18 @@ var spent: float = 0.0
 var waiting: StringName = NOT_WAITING
 ## How the move treats enemy 1" zones (a retreat), null for the normal rule.
 var zones: EnemyZones = null
+## What the move is part of, if it is not an ordinary move step (a charge),
+## or null. Copied with it.
+var parent: Resolution = null
+## Called as on_end(state, staged, stopped: bool, events) when the move is
+## over, instead of keeping an open move: `stopped` if a roll stopped it
+## short (the activation then ends after the call, as for any move). A static
+## function, so it may be kept across commands, undo and replay. Empty for an
+## ordinary move step.
+var on_end: Callable = Callable()
+## Added to every MODEL_MOVED of the move, so the view can tell what it is
+## ({"charge": true}, {"slide": true}).
+var event_data: Dictionary = {}
 
 
 func copy() -> Resolution:
@@ -46,6 +59,9 @@ func copy() -> Resolution:
 	result.spent = spent
 	result.waiting = waiting
 	result.zones = zones
+	result.parent = parent.copy() if parent != null else null
+	result.on_end = on_end
+	result.event_data = event_data
 	return result
 
 

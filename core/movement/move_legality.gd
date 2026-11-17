@@ -279,6 +279,70 @@ func wall_cost(u: Vector2, su: int, v: Vector2, sv: int, preferred: Transitions.
 	return Transitions.wall_cost(kind, horizontal, wall_height)
 
 
+## Cost of a roll-free change of floor from u to v (3D points on different
+## levels, at most `max_horizontal` apart on the table plane), or INF. For a
+## move that must keep a constraint the touch-point geometry of wall_cost()
+## would break: sliding around a charge target's base keeps the bases in
+## contact the whole way (ruling 8 of brief 008b), so the base goes up or
+## down where the circle of contact crosses the wall rather than straight at
+## it. The way across is the one wall_cost() would take there without a roll
+## (Transitions: kind, and the height paid), both ends must be passable and
+## the way clear of enemy zones; last_kind, last_drop and last_rise say how it
+## was taken.
+func level_change_cost(u: Vector3, v: Vector3, max_horizontal: float) -> float:
+	last_kind = Transitions.Kind.NONE
+	last_result = Result.NO_WAY
+	var u2: Vector2 = Vector2(u.x, u.z)
+	var v2: Vector2 = Vector2(v.x, v.z)
+	var horizontal: float = u2.distance_to(v2)
+	if horizontal > max_horizontal + EPSILON:
+		return INF
+	var best: float = INF
+	for su: int in surfaces_at(u):
+		for sv: int in surfaces_at(v):
+			if field.same_level(su, sv):
+				continue
+			var yu: float = field.surface_height(su, u2)
+			var yv: float = field.surface_height(sv, v2)
+			var going_up: bool = yv > yu
+			var high_surface: int = sv if going_up else su
+			var piece: TerrainPiece = field.surfaces[high_surface].piece
+			if piece == null:
+				continue
+			var wall_height: float = absf(yv - yu)
+			var low_y: float = minf(yu, yv)
+			var options: Array[Transitions.Kind] = Transitions.wall_options(
+				going_up, wall_height, piece.tag, going_up and field.is_low_obstacle(high_surface), descent_mode
+			)
+			if piece.base_height > low_y + HeightField.TOLERANCE:
+				var off: Array[Transitions.Kind] = []
+				for option: Transitions.Kind in options:
+					if not Transitions.climbs(option):
+						off.append(option)
+				options = off
+			var kind: Transitions.Kind = Transitions.pick_wall_kind(options, going_up, wall_height, false)
+			if kind == Transitions.Kind.NONE:
+				last_result = Result.NEEDS_ROLL if not options.is_empty() else Result.NO_WAY
+				continue
+			if passing_result(u2, su) != Result.OK or passing_result(v2, sv) != Result.OK:
+				last_result = Result.TERRAIN
+				continue
+			if not _enemies_clear(u2, v2, low_y, maxf(yu, yv)):
+				last_result = Result.ENEMY
+				continue
+			var cost: float = Transitions.wall_cost(kind, horizontal, wall_height)
+			if cost < best:
+				best = cost
+				last_kind = kind
+				last_drop = 0.0 if going_up else wall_height
+				last_rise = wall_height if going_up else 0.0
+	if best < INF:
+		last_result = Result.OK
+		last_gap = 0.0
+		last_rolls = 0
+	return best
+
+
 ## Cost of a gap jump from u on the ledge of su straight across to v on the
 ## ledge of sv, or INF if that is not a legal jump (last_result says why;
 ## TOO_WIDE if only the jump limit is in the way). See the class notes.

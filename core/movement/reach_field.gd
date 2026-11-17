@@ -43,6 +43,14 @@ extends RefCounted
 ## if it is longer; else the fewest rolls, then the cheapest). rolls_to()
 ## lists the rolls on the offered route in order.
 
+## Which route a query offers to a destination (brief 008b, ruling 2):
+## SAFEST is a move's (ruling 8 of brief 006: the roll-free route if there is
+## one, else the fewest rolls, then the cheapest); SAFE_ONLY only roll-free
+## routes (a charge with "allow climbs and jumps" off); SHORTEST the cheapest
+## route of any kind, the fewer rolls on a tie (that toggle on). One field
+## answers all three: its tier 0 is the roll-free search.
+enum RouteChoice { SAFEST, SAFE_ONLY, SHORTEST }
+
 const CELL_SIZE: float = 0.25
 ## Nodes searched past the remaining movement so the outline can close and
 ## interpolate smoothly at its edge. They are never reported as reachable.
@@ -108,6 +116,8 @@ var descent_mode: Transitions.DescentMode = Transitions.DescentMode.DROP
 var zones: EnemyZones = null
 ## Whether routes may make rolls (a charge may not, ruling 5 of brief 007).
 var allow_rolls: bool = true
+## Which route queries offer (see RouteChoice); set with set_route_choice().
+var route_choice: RouteChoice = RouteChoice.SAFEST
 ## How long building took, for reports: "setup_ms", "search_ms" and
 ## "tier_<n>_ms" (wall-clock; diagnostics only, never used for rules).
 var timings: Dictionary = {}
@@ -173,6 +183,11 @@ var _query_key: Vector4 = Vector4(INF, INF, INF, INF)
 var _query_anchor: int = NONE
 var _query_surface: int = NONE
 var _query_tier: int = UNREACHED
+var _query_cost: float = INF
+## Whether a crossing was left out because it would end past the search
+## limit: roll-free from the safe search, and of any kind.
+var _cut_safe: bool = false
+var _cut_any: bool = false
 var _query_target: Vector3
 var _query_path: Array[Vector3] = []
 var _query_path_ready: bool = false
@@ -230,6 +245,71 @@ func _init(
 	_search()
 	timings["setup_ms"] = (t1 - t0) / 1000.0
 	timings["search_ms"] = (Time.get_ticks_usec() - t1) / 1000.0
+
+
+## Makes queries offer `choice`'s route (see RouteChoice).
+func set_route_choice(choice: RouteChoice) -> void:
+	if choice == route_choice:
+		return
+	route_choice = choice
+	_query_key = Vector4(INF, INF, INF, INF)
+	_snap_point = Vector3(INF, INF, INF)
+
+
+## A quick estimate of what a move to `point` costs on the route offered
+## (path plus any stop surcharge), INF if it cannot be reached: what the
+## search found, before the path is simplified and priced again (cost_to(),
+## never more than this). For comparing many candidate destinations.
+func estimate_cost(point: Vector3) -> float:
+	_resolve(Vector2(point.x, point.z), _surfaces_for(point))
+	if _query_anchor == NONE:
+		return INF
+	return _query_cost + field.stop_surcharge(_query_surface, legality.start_piece_ids)
+
+
+## estimate_cost() for the roll-free route and the cheapest route of any kind
+## at once (the two charge route choices): Vector2(SAFE_ONLY, SHORTEST), INF
+## where there is none. Leaves the query cache alone.
+func estimate_costs(point: Vector3) -> Vector2:
+	var result: Vector2 = Vector2(INF, INF)
+	if _cost.is_empty() or _start_states.is_empty():
+		return result
+	var target: Vector2 = Vector2(point.x, point.z)
+	var stoppable: PackedInt32Array = PackedInt32Array()
+	var surcharges: PackedFloat64Array = PackedFloat64Array()
+	for surface: int in _surfaces_for(point):
+		if legality.point_result(target, surface) == MoveLegality.Result.OK:
+			stoppable.append(surface)
+			surcharges.append(field.stop_surcharge(surface, legality.start_piece_ids))
+	if stoppable.is_empty():
+		return result
+	var current: int = _tier
+	for tier: int in MAX_ROLLS + 1:
+		if not _use_tier(tier):
+			continue
+		for i: int in stoppable.size():
+			var found: Vector2 = _best_source(target, stoppable[i], minf(budget - surcharges[i] + EPSILON, result.y - surcharges[i] - EPSILON))
+			if found.y != NONE and found.x + surcharges[i] < result.y:
+				result.y = found.x + surcharges[i]
+				if tier == 0:
+					result.x = result.y
+	_use_tier(current)
+	return result
+
+
+## Whether a field with a larger budget could reach anywhere this one does
+## not, with `choice`'s routes: false if the search ran out of places to go
+## before the budget (an enclosed area, such as a platform it cannot get down
+## from without a roll), so nothing further is reachable at all.
+func reaches_beyond(choice: RouteChoice) -> bool:
+	var safe: bool = choice == RouteChoice.SAFE_ONLY
+	if _cut_any if not safe else _cut_safe:
+		return true
+	var costs: PackedFloat64Array = _safe_cost if safe else _any_cost
+	for k: int in costs.size():
+		if costs[k] > budget + EPSILON and costs[k] < INF:
+			return true
+	return false
 
 
 ## Radius of the model's base, inches.
@@ -949,6 +1029,9 @@ func _try_wall(state: int, from: Vector2, from_surface: int, to: Vector2, to_sur
 		return
 	var arrival_cost: float = _cost[state] + walk + crossing
 	if arrival_cost > _limit:
+		_cut_any = true
+		if tier == 0:
+			_cut_safe = true
 		return
 	if tier > _tier and _arrival_near_is_as_cheap(to, to_surface, arrival_cost, _tier + 1, tier):
 		return
@@ -1120,6 +1203,7 @@ func _resolve(target: Vector2, surfaces: PackedInt32Array) -> void:
 	_query_anchor = NONE
 	_query_surface = NONE
 	_query_tier = UNREACHED
+	_query_cost = INF
 	_query_path_ready = false
 	if _cost.is_empty() or _start_states.is_empty():
 		return
@@ -1129,22 +1213,30 @@ func _resolve(target: Vector2, surfaces: PackedInt32Array) -> void:
 			stoppable.append(surface)
 	if stoppable.is_empty():
 		return
-	# The lowest tier that reaches it (ruling 8), the cheapest there.
-	for tier: int in MAX_ROLLS + 1:
+	# SAFEST: the lowest tier that reaches it (ruling 8), the cheapest there.
+	# SAFE_ONLY: tier 0 only. SHORTEST: the cheapest over every tier, the
+	# lower tier on a tie.
+	var last_tier: int = 0 if route_choice == RouteChoice.SAFE_ONLY else MAX_ROLLS
+	var best_total: float = INF
+	for tier: int in last_tier + 1:
 		if not _use_tier(tier):
 			continue
-		var best_total: float = INF
+		var found_here: bool = false
 		for surface: int in stoppable:
 			var stop_budget: float = budget - field.stop_surcharge(surface, legality.start_piece_ids) + EPSILON
-			var found: Vector2 = _best_source(target, surface, minf(stop_budget, best_total))
-			if found.y != NONE and found.x < best_total:
+			var found: Vector2 = _best_source(target, surface, minf(stop_budget, best_total - EPSILON))
+			if found.y != NONE and found.x < best_total - EPSILON:
 				best_total = found.x
+				found_here = true
 				_query_anchor = int(found.y)
 				_query_surface = surface
 				_query_target = legality.on_surface(target, surface)
-		if _query_anchor != NONE:
-			_query_tier = tier
-			return
+				_query_tier = tier
+				_query_cost = found.x
+		if found_here and route_choice == RouteChoice.SAFEST:
+			break
+	if _query_anchor != NONE:
+		_use_tier(_query_tier)
 
 
 ## The cheapest anchor (or state, made an anchor) on `surface` that can walk

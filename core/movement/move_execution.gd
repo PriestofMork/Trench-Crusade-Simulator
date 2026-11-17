@@ -1,7 +1,13 @@
 class_name MoveExecution
 extends RefCounted
-## Carries out a checked path (MovePath) for MoveCommand, in stages where it
-## makes rolls (brief 006):
+## The one movement process (brief 006, brief 008b): carries out a checked
+## list of path segments for any action. MoveCommand hands it every step of
+## an open move (Move, Dash, Retreat); a charge hands it its route and its
+## slide around the target (ChargeExecution). Nothing else walks a path or
+## resolves a climb, jump or drop. An action only supplies the segments (its
+## distance, how enemy 1" zones are treated and whether routes with rolls are
+## allowed decide which), and, through StagedMove.on_end, what happens when
+## the move is over.
 ##
 ## 1. The model moves along the path up to the next roll point and stops
 ##    there (MODEL_MOVED for that leg).
@@ -13,15 +19,16 @@ extends RefCounted
 ## 3. When the roll is resolved, its on_resolved callback (_on_roll) reads the
 ##    move back from GameState.resolution (a StagedMove) and goes on:
 ##    - success / still standing: on along the path to the next roll point,
-##      or to the end, where the move stays open with what is left;
+##      or to the end;
 ##    - failed climb: the model stays at the foot (or top), moved to the
 ##      closest place it can stop if it cannot stop there, and the activation
 ##      ends;
-##    - failed jump: the model falls into the gap from its middle, lands on
-##      the first floor beneath at the closest place it can stop, takes the
-##      injury roll if it fell 3" or more, and the activation ends;
+##    - failed jump: the model falls into the gap from its middle (Falling),
+##      takes the injury roll if it fell 3" or more, and the activation ends;
 ##    - Down or Out of Action from an injury roll: the move stops and the
 ##      activation ends.
+## 4. At the end an ordinary move step stays open with what is left; a move
+##    with an on_end hook calls it instead.
 ## Movement spent stays spent. The roll reactions that end an activation (a
 ## failed risky roll, going Down) only record it on the StagedMove while it
 ## is under way (TurnFlow.end_activation_when_done()); the move ends the
@@ -45,6 +52,12 @@ static func start(state: GameState, path: MovePath, decision: PendingDecision, e
 	staged.surcharge = path.surcharge
 	staged.zones = decision.zones
 	state.pending = null
+	run(state, staged, events)
+
+
+## Carries out `staged` (its segments, budget and hooks set) from the
+## model's position.
+static func run(state: GameState, staged: StagedMove, events: Array[GameEvent]) -> void:
 	state.resolution = staged
 	_advance(state, events)
 
@@ -122,20 +135,8 @@ static func _fail(state: GameState, staged: StagedMove, events: Array[GameEvent]
 		_stop(state, staged, events, "the climb failed")
 		return
 	# It falls into the gap from over its middle.
-	var over: Vector3 = segment.fall_point
-	var over_2d: Vector2 = Vector2(over.x, over.z)
-	var below: int = legality.surface_below(over_2d, over.y)
-	var landing: Vector3 = model.position
-	if below != -1:
-		var spot: Variant = legality.closest_stop(over_2d, below)
-		landing = spot if spot != null else legality.on_surface(over_2d, below)
-	var height: float = maxf(over.y - landing.y, 0.0)
-	var fell: GameEvent = GameEvent.new(GameEvent.Kind.MODEL_FELL, model.player, model.id, {
-		"from": model.position, "over": over, "to": landing, "height": height,
-	})
-	events.append(fell)
-	model.position = landing
-	if Transitions.is_fall(height):
+	var height: float = Falling.fall(state, model, segment.fall_point, events, "the jump failed")
+	if Falling.hurts(height):
 		staged.waiting = StagedMove.FALL_INJURY
 		_start_injury_roll(state, staged, height, "falling %.1f\"" % height, events)
 		return
@@ -149,14 +150,20 @@ static func _stop(state: GameState, staged: StagedMove, events: Array[GameEvent]
 	events.append(GameEvent.new(GameEvent.Kind.MOVE_STOPPED, staged.player, staged.model_id, {
 		"reason": why, "at": model.position, "spent": staged.spent,
 	}))
+	if staged.on_end.is_valid():
+		staged.on_end.call(state, staged, true, events)
 	var reason: String = staged.end_reason if staged.end_reason != "" else why
 	if state.turn.active_model_id == staged.model_id:
 		TurnFlow.end_activation(state, events, reason)
 
 
-## The whole path is carried out: the move stays open with what is left.
+## The whole path is carried out: the move stays open with what is left, or
+## its on_end hook takes over (it then sees to any end_reason itself).
 static func _finish(state: GameState, staged: StagedMove, events: Array[GameEvent]) -> void:
 	state.resolution = null
+	if staged.on_end.is_valid():
+		staged.on_end.call(state, staged, false, events)
+		return
 	if staged.end_reason != "":
 		if state.turn.active_model_id == staged.model_id:
 			TurnFlow.end_activation(state, events, staged.end_reason)
@@ -180,9 +187,9 @@ static func _move_leg(
 		end.y = legality.field.surface_height(surfaces[0], Vector2(end.x, end.z))
 		leg[leg.size() - 1] = end
 	model.position = end
-	events.append(GameEvent.new(GameEvent.Kind.MODEL_MOVED, staged.player, staged.model_id, {
-		"path": leg.duplicate(), "kinds": kinds.duplicate(), "cost": cost, "left": staged.left(),
-	}))
+	var data: Dictionary = {"path": leg.duplicate(), "kinds": kinds.duplicate(), "cost": cost, "left": staged.left()}
+	data.merge(staged.event_data)
+	events.append(GameEvent.new(GameEvent.Kind.MODEL_MOVED, staged.player, staged.model_id, data))
 
 
 static func _start_risky_roll(state: GameState, staged: StagedMove, segment: MoveSegment, events: Array[GameEvent]) -> void:
@@ -204,8 +211,6 @@ static func _start_injury_roll(
 	events.append(GameEvent.new(GameEvent.Kind.MOVE_ROLL_POINT, staged.player, staged.model_id, {
 		"roll": "Injury roll: %s" % what, "at": model.position,
 	}))
-	var request: RollRequest = RollRequest.injury(1 - model.player, -1, model.id)
-	request.label = "Injury roll (%s)" % what
-	request.context = {&"fall_inches": fall}
+	var request: RollRequest = Falling.injury_request(model, fall, what)
 	request.on_resolved = _on_roll
 	RollPipeline.start(state, request, events)
