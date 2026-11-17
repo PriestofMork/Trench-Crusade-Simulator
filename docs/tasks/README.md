@@ -27,7 +27,7 @@ Open a new session in this folder and say:
 | `006-height-part-2.md` | Done |
 | `007-charge-melee-retreat.md` | Done |
 | `008-line-of-sight.md` | Done |
-| `008b-charge-corrections-and-down.md` | Ready |
+| `008b-charge-corrections-and-down.md` | Done |
 
 ## Planned next (not yet written)
 
