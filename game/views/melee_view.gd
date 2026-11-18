@@ -14,6 +14,7 @@ const LABEL_COLOURS: Dictionary[String, Color] = {
 	"certain": Color(0.55, 0.95, 0.55),
 	"roll": Color(1.0, 0.85, 0.4),
 	"out": Color(0.7, 0.7, 0.72),
+	"declarable": Color(0.92, 0.92, 0.95),
 }
 const LINK_WIDTH: float = 0.14
 const ZONE_WIDTH: float = 0.05
@@ -73,35 +74,54 @@ func show_zones(state: GameState, model: ModelState) -> void:
 	_set_mesh(_zones, vertices)
 
 
-## Charge mode: a label over each enemy in range with what charging it
-## takes. `plans` maps a declared target's id to its plan.
-func show_charge_labels(state: GameState, plans: Dictionary[int, ChargePlan]) -> void:
+## Charge mode (ruling 6 of brief 008c): a label over each enemy in range.
+## `declarations` maps its id to "" if it can be declared ("can charge"),
+## else why not ("not visible"). The selected one (`selected`, -1 for none)
+## says what its route needs instead: `plan`, or "…" while it is null.
+func show_charge_declarations(
+	state: GameState, declarations: Dictionary[int, String], selected: int, plan: ChargePlan
+) -> void:
 	clear_charge_labels()
-	for id: int in plans:
-		var plan: ChargePlan = plans[id]
-		var model: ModelState = state.get_model(id)
-		var label: Label3D = Label3D.new()
-		label.name = "ChargeLabel%d" % id
-		label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
-		label.no_depth_test = true
-		label.fixed_size = true
-		label.pixel_size = 0.0012
-		label.font_size = 24
-		label.outline_size = 10
-		label.text = charge_text(plan)
-		var colour: Color = LABEL_COLOURS["out"]
-		if plan.reachable():
-			colour = LABEL_COLOURS["certain"] if plan.is_certain() else LABEL_COLOURS["roll"]
-		label.modulate = colour
-		label.position = model.position + Vector3(0.0, model.height_inches() + 1.15, 0.0)
-		add_child(label)
-		_labels[id] = label
+	for id: int in declarations:
+		var text: String = "can charge" if declarations[id] == "" else "not visible"
+		var colour: Color = LABEL_COLOURS["declarable"] if declarations[id] == "" else LABEL_COLOURS["out"]
+		if id == selected:
+			if plan == null:
+				text = "…"
+			else:
+				text = charge_text(plan)
+				colour = LABEL_COLOURS["out"]
+				if plan.reachable():
+					colour = LABEL_COLOURS["certain"] if plan.is_certain() else LABEL_COLOURS["roll"]
+		_add_label(state.get_model(id), text, colour, id == selected)
 
 
-## What a charge label says.
+func _add_label(model: ModelState, text: String, colour: Color, selected: bool) -> void:
+	var label: Label3D = Label3D.new()
+	label.name = "ChargeLabel%d" % model.id
+	label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+	label.no_depth_test = true
+	label.fixed_size = true
+	label.pixel_size = 0.0012
+	label.font_size = 28 if selected else 22
+	label.outline_size = 10
+	label.text = text
+	label.modulate = colour
+	label.position = model.position + Vector3(0.0, model.height_inches() + 1.15, 0.0)
+	add_child(label)
+	_labels[model.id] = label
+
+
+## The text of the charge label over `id`, or "".
+func charge_label_text(id: int) -> String:
+	return _labels[id].text if _labels.has(id) else ""
+
+
+## What a selected target's label says: the route's result, or the model in
+## the way.
 static func charge_text(plan: ChargePlan) -> String:
-	if plan.interposed() and plan.reachable():
-		return "%s → %d" % [plan.label(), plan.target_id]
+	if plan.interposed():
+		return "%s: model %d in the way" % [plan.label(), plan.target_id]
 	return plan.label()
 
 

@@ -75,21 +75,31 @@ var _sight_debug: bool = false
 ## The enemy under the cursor while a model is selected, or -1.
 var _sight_hover: int = -1
 
-## Charge mode (briefs 007, 008b): on while the selected model picks a
-## target. The plans (by declared target, for both route choices: [no rolls,
-## rolls allowed]) are worked out on a worker thread.
+## Charge mode (briefs 007, 008b, 008c): on while the selected model picks a
+## target. Opening it only runs the declaration check (every enemy in range:
+## can it be declared?). The route is worked out for the clicked target
+## alone, on a worker thread; core keeps it (GameState.charge_routes()), so
+## clicking the same target again, or declaring it, searches nothing.
 var _charge_mode: bool = false
-var _charge_plans: Dictionary[int, Array] = {}
+## Enemy in range -> "" if it can be declared, else why not.
+var _charge_declarations: Dictionary[int, String] = {}
 var _charge_task: int = -1
-var _built_plans: Dictionary[int, Array] = {}
+## What the running task works out: "target:rolls:mode".
+var _charge_task_key: String = ""
 ## "Allow climbs and jumps" (ruling 2 of brief 008b): off by default.
 var _charge_rolls: bool = false
-## How long working out the charge options took, ms (both route choices).
+## How long opening charge mode took (the declaration check), and the last
+## route worked out (on the worker), ms.
 var charge_build_ms: float = 0.0
+var charge_route_ms: float = 0.0
 var _charge_started_usec: int = 0
-var _built_plans_ready: bool = false
-## The target the confirmation panel would charge.
+## The selected target (the one whose route is shown and asked to
+## confirm), or -1; its plan for the current route choice, null while it is
+## being worked out.
 var _charge_target: int = -1
+var _charge_plan: ChargePlan = null
+## The enemy highlighted under the cursor in charge mode, or -1.
+var _charge_hover: int = -1
 ## The contact position under the cursor (CHARGE_CONTACT), or -1.
 var _contact_hover: int = -1
 ## The free attacks of the retreat being played, as tray lines.
@@ -204,6 +214,8 @@ func _process(_delta: float) -> void:
 
 ## Runs a command and plays back its events. Returns "" or why it was rejected.
 func send(command: Command) -> String:
+	# A charge route on the worker reads the state: let it finish first.
+	_wait_for_charge_task()
 	var result: CommandResult = state.submit(command)
 	if not result.ok():
 		_hud.show_message("[color=#%s]%s[/color]" % [UiStyle.BAD_COLOUR.to_html(false), result.error])
@@ -302,6 +314,9 @@ func cancel_confirm() -> void:
 		&"charge":
 			_close_confirm()
 			_charge_target = -1
+			_charge_plan = null
+			_show_charge_labels()
+			_preview.hide_all()
 			_hud.show_message("Charge not declared. Pick another target, or Esc to leave charge mode.")
 		&"retreat":
 			_close_confirm()
@@ -386,40 +401,46 @@ func is_charge_mode() -> bool:
 	return _charge_mode
 
 
-## Whether charge mode has worked out its plans.
+## Whether charge mode is open and no route is being worked out.
 func is_charge_ready() -> bool:
 	return _charge_mode and _charge_task == -1
 
 
-## The plans for the current route choice, by declared target.
-func charge_plans() -> Dictionary[int, ChargePlan]:
-	var result: Dictionary[int, ChargePlan] = {}
-	for id: int in _charge_plans:
-		result[id] = _charge_plans[id][1 if _charge_rolls else 0]
-	return result
+## Enemy in range -> "" if it can be declared, else why not (charge mode).
+func charge_declarations() -> Dictionary[int, String]:
+	return _charge_declarations
 
 
-## Both route choices' plans for `target_id` ([off, on]), or [].
-func charge_plans_for(target_id: int) -> Array:
-	return _charge_plans.get(target_id, [])
+## The selected target, or -1.
+func charge_target() -> int:
+	return _charge_target
+
+
+## The selected target's plan for the current route choice, or null (none
+## selected, or still being worked out).
+func charge_plan() -> ChargePlan:
+	return _charge_plan
+
+
+## The text of the charge label over `id`, or "" if it has none.
+func charge_label_text(id: int) -> String:
+	return _melee_view.charge_label_text(id)
 
 
 func is_charge_rolls() -> bool:
 	return _charge_rolls
 
 
-## Switches "allow climbs and jumps" in charge mode (J): the labels and the
-## preview show the other route choice. Nothing is worked out again.
+## Switches "allow climbs and jumps" in charge mode (J). With a target
+## selected, its route for the other choice is worked out (once; core keeps
+## both).
 func toggle_charge_rolls() -> String:
 	if not _charge_mode:
 		return "Not in charge mode."
 	_charge_rolls = not _charge_rolls
-	if _confirming == &"charge":
-		_close_confirm()
-		_charge_target = -1
-	if _charge_task == -1:
-		_melee_view.show_charge_labels(state, charge_plans())
 	_hud.show_message("Charge routes: climbs and jumps %s." % ("allowed (the shortest route of any kind)" if _charge_rolls else "not allowed (the shortest route with no roll)"))
+	if _charge_target != -1:
+		_start_charge_route()
 	_refresh_all()
 	return ""
 
@@ -431,8 +452,8 @@ func toggle_charge_mode() -> String:
 	return enter_charge_mode()
 
 
-## Charge mode for the selected model: works out the charge against every
-## enemy in range on a worker thread, then labels them.
+## Charge mode for the selected model: the declaration check for every enemy
+## in range (ruling 1 of brief 008c), then labels. No route yet.
 func enter_charge_mode() -> String:
 	if is_busy():
 		return "Wait for the move to finish."
@@ -441,31 +462,25 @@ func enter_charge_mode() -> String:
 		_hud.show_message("[color=#%s]Charge: %s[/color]" % [UiStyle.BAD_COLOUR.to_html(false), error])
 		return error
 	_unpin()
+	_clear_reach()
 	_charge_mode = true
 	_charge_rolls = false
-	_start_charge_plans()
-	return ""
-
-
-## Works out the charge options for the selected model (again, after the
-## descent mode changed).
-func _start_charge_plans() -> void:
-	_charge_plans = {}
 	_charge_target = -1
-	if _confirming == &"charge":
-		_close_confirm()
-	_clear_reach()
-	_wait_for_charge_task()
-	_built_plans_ready = false
-	_melee_view.clear_charge_labels()
-	# The height field and the sight terrain are shared; build them here so
-	# the worker only reads them.
-	state.height_field()
-	state.sight_terrain()
+	_charge_plan = null
 	_charge_started_usec = Time.get_ticks_usec()
-	_charge_task = WorkerThreadPool.add_task(_build_charges.bind(_selected_id, descent_mode()))
-	_hud.show_message("Charge mode: working out the charges…")
+	_charge_declarations = ChargePlanner.new(state, _selected_id, descent_mode()).declarations()
+	charge_build_ms = (Time.get_ticks_usec() - _charge_started_usec) / 1000.0
+	print("Charge mode for model %d: %.1f ms (declaration check, %d enemies in range)" % [_selected_id, charge_build_ms, _charge_declarations.size()])
+	_show_charge_labels()
+	var unseen: int = 0
+	for id: int in _charge_declarations:
+		if _charge_declarations[id] != "":
+			unseen += 1
+	_hud.show_message("Charge mode: %d enemies in range, %d not visible. Click one to see its route. J: climbs and jumps. Esc leaves." % [
+		_charge_declarations.size(), unseen
+	])
 	_refresh_all()
+	return ""
 
 
 func exit_charge_mode() -> void:
@@ -473,8 +488,10 @@ func exit_charge_mode() -> void:
 		return
 	_charge_mode = false
 	_wait_for_charge_task()
-	_charge_plans = {}
+	_charge_declarations = {}
 	_charge_target = -1
+	_charge_plan = null
+	_set_charge_hover(-1)
 	if _confirming == &"charge":
 		_close_confirm()
 	_melee_view.clear_charge_labels()
@@ -484,19 +501,46 @@ func exit_charge_mode() -> void:
 	_refresh_all()
 
 
-## On a worker thread: only reads the state, which cannot change while
-## charge mode is working (nothing is sent until it is ready).
-func _build_charges(charger_id: int, mode: Transitions.DescentMode) -> void:
-	var planner: ChargePlanner = ChargePlanner.new(state, charger_id, mode)
-	var plans: Dictionary[int, Array] = {}
-	# Every enemy in range, both route choices: those the charger cannot see
-	# get a "not visible" plan.
-	for target: ModelState in planner.in_range():
-		plans[target.id] = planner.plans(target.id)
-	_built_mutex.lock()
-	_built_plans = plans
-	_built_plans_ready = true
-	_built_mutex.unlock()
+## The labels of charge mode (ruling 6 of brief 008c): every enemy in range
+## says whether it can be declared; the selected one what its route needs.
+func _show_charge_labels() -> void:
+	_melee_view.show_charge_declarations(state, _charge_declarations, _charge_target, _charge_plan)
+
+
+## Works out the selected target's route for the current route choice: at
+## once if core already has it, else on a worker thread (the label says "…"
+## until it is ready). A route already being worked out finishes first.
+func _start_charge_route() -> void:
+	if _confirming == &"charge":
+		_close_confirm()
+	_charge_plan = null
+	var planner: ChargePlanner = ChargePlanner.new(state, _selected_id, descent_mode())
+	if planner.is_planned(_charge_target, _charge_rolls):
+		_show_charge_plan(planner.plan(_charge_target, _charge_rolls))
+		return
+	_show_charge_labels()
+	_preview.hide_all()
+	if _charge_task != -1:
+		return
+	# The height field and the sight terrain are shared; build them here so
+	# the worker only reads them.
+	state.height_field()
+	state.sight_terrain()
+	_charge_task_key = _charge_route_key()
+	_charge_started_usec = Time.get_ticks_usec()
+	_charge_task = WorkerThreadPool.add_task(_plan_charge.bind(_selected_id, _charge_target, _charge_rolls, descent_mode()))
+	_hud.show_message("Charge mode: working out the route to model %d…" % _charge_target)
+
+
+func _charge_route_key() -> String:
+	return "%d:%s:%d" % [_charge_target, str(_charge_rolls), descent_mode()]
+
+
+## On a worker thread: only reads the state, which cannot change while it
+## runs (sending a command, undo and redo wait for it). The plan is kept by
+## core's cache, where the main thread then finds it.
+func _plan_charge(charger_id: int, target_id: int, allow_rolls: bool, mode: Transitions.DescentMode) -> void:
+	ChargePlanner.new(state, charger_id, mode).plan(target_id, allow_rolls)
 
 
 func _collect_charges() -> void:
@@ -504,57 +548,58 @@ func _collect_charges() -> void:
 		return
 	WorkerThreadPool.wait_for_task_completion(_charge_task)
 	_charge_task = -1
-	_built_mutex.lock()
-	var plans: Dictionary[int, Array] = _built_plans
-	_built_plans = {}
-	_built_mutex.unlock()
-	charge_build_ms = (Time.get_ticks_usec() - _charge_started_usec) / 1000.0
-	print("Charge options for model %d: %.0f ms (both route choices, %d targets)" % [_selected_id, charge_build_ms, plans.size()])
-	if not _charge_mode:
+	charge_route_ms = (Time.get_ticks_usec() - _charge_started_usec) / 1000.0
+	print("Charge route for model %d -> %s: %.0f ms on a worker" % [_selected_id, _charge_task_key, charge_route_ms])
+	if not _charge_mode or _charge_target == -1:
 		return
-	_charge_plans = plans
-	var current: Dictionary[int, ChargePlan] = charge_plans()
-	_melee_view.show_charge_labels(state, current)
-	var reachable: int = 0
-	var unseen: int = 0
-	for plan: ChargePlan in current.values():
-		if plan.reachable():
-			reachable += 1
-		if plan.not_visible:
-			unseen += 1
-	_hud.show_message("Charge mode: %d enemies in range, %d not visible, %d reachable. Hover one to see the route, click to charge. J: climbs and jumps. Esc leaves." % [
-		current.size(), unseen, reachable
-	])
+	if _charge_task_key != _charge_route_key():
+		# The selection or the route choice changed meanwhile.
+		_start_charge_route()
+		return
+	_show_charge_plan(ChargePlanner.new(state, _selected_id, descent_mode()).plan(_charge_target, _charge_rolls))
 
 
 func _wait_for_charge_task() -> void:
 	if _charge_task != -1:
 		WorkerThreadPool.wait_for_task_completion(_charge_task)
 		_charge_task = -1
-		_built_plans = {}
 
 
-## Charge mode: clicking an enemy asks to confirm the charge against it.
+## Charge mode: clicking an enemy selects it (if it can be declared) and
+## works out its route; the charge is then confirmed or cancelled.
 func request_charge(target_id: int) -> String:
-	if not _charge_mode or _charge_task != -1:
+	if not _charge_mode:
 		return "Not in charge mode."
-	if not _charge_plans.has(target_id):
+	if not _charge_declarations.has(target_id):
 		_hud.show_message("Model %d cannot be charged: it is not an enemy within 12\" ." % target_id)
 		return "Not a target."
-	var plan: ChargePlan = charge_plans()[target_id]
-	if plan.error != "":
-		_hud.show_message("[color=#%s]%s[/color]" % [UiStyle.BAD_COLOUR.to_html(false), plan.error])
-		return plan.error
+	var error: String = _charge_declarations[target_id]
+	if error != "":
+		_hud.show_message("[color=#%s]%s[/color]" % [UiStyle.BAD_COLOUR.to_html(false), error])
+		return error
 	_charge_target = target_id
+	_start_charge_route()
+	_refresh_all()
+	return ""
+
+
+## The selected target's route is ready: its label, the route drawn, and
+## the confirmation panel.
+func _show_charge_plan(plan: ChargePlan) -> void:
+	_charge_plan = plan
+	_show_charge_labels()
 	var lines: PackedStringArray = PackedStringArray()
-	lines.append("[b]Charge model %d?[/b]" % target_id)
+	lines.append("[b]Charge model %d?[/b]" % plan.declared_id)
 	if plan.interposed():
 		lines.append("[color=#%s]Model %d is in the way: the charge is against model %d instead.[/color]" % [
 			UiStyle.GOLD_COLOUR.to_html(false), plan.interposers[0], plan.target_id
 		])
 	var model: ModelState = state.get_model(_selected_id)
-	var to: String = "to base contact" if plan.contact else "to the closest place it can stop (no base contact)"
-	lines.append("%.1f\" %s; Movement %s\" + D6 (%s)." % [plan.length, to, str(model.movement), plan.label()])
+	if plan.path.is_empty():
+		lines.append("No route: the charger cannot move anywhere (%s)." % plan.label())
+	else:
+		var to: String = "to base contact" if plan.contact else "to the closest place it can stop (no base contact)"
+		lines.append("%.1f\" %s; Movement %s\" + D6 (%s)." % [plan.length, to, str(model.movement), plan.label()])
 	if not plan.rolls.is_empty():
 		var labels: PackedStringArray = PackedStringArray()
 		for roll: Dictionary in plan.rolls:
@@ -566,12 +611,13 @@ func request_charge(target_id: int) -> String:
 		lines.append("[color=#%s]No D6 result reaches: it moves as far as it can and stops outside every enemy's 1\" zone.[/color]" % UiStyle.BAD_COLOUR.to_html(false))
 	lines.append("Climbs and jumps %s. The D6 is rolled once it is declared; the declaration stands whatever the roll." % ("allowed" if _charge_rolls else "not allowed"))
 	_ask_confirm(&"charge", "\n".join(lines))
-	return ""
+	_hud.show_message("Charge model %d: %s. Confirm or Cancel; another enemy to pick it instead." % [plan.declared_id, MeleeView.charge_text(plan)])
 
 
 ## Declares the charge waiting for confirmation: the D6 rolls in the tray.
+## Core finds the route it was shown in its cache (ruling 7 of 008c).
 func confirm_charge() -> String:
-	if _charge_target == -1:
+	if _charge_target == -1 or _charge_plan == null:
 		return "No charge to confirm."
 	var model: ModelState = state.get_model(_selected_id)
 	var target: int = _charge_target
@@ -677,6 +723,7 @@ func undo() -> String:
 	if is_busy():
 		return "Wait for the move to finish."
 	_wait_for_reach_task()
+	_wait_for_charge_task()
 	if not state.undo():
 		_hud.show_message("Nothing to undo.")
 		return "Nothing to undo."
@@ -692,6 +739,7 @@ func redo() -> String:
 	if is_busy():
 		return "Wait for the move to finish."
 	_wait_for_reach_task()
+	_wait_for_charge_task()
 	if not state.can_redo():
 		_hud.show_message("Nothing to redo.")
 		return "Nothing to redo."
@@ -746,8 +794,10 @@ func toggle_descent_mode() -> void:
 	_descent[_selected_id] = mode
 	_hud.show_message("Descent: %s" % _descent_name(mode))
 	if _charge_mode:
-		# The routes depend on it: work them out again, keeping the toggle.
-		_start_charge_plans()
+		# The selected route depends on it: work it out for this mode.
+		if _charge_target != -1:
+			_start_charge_route()
+		_refresh_all()
 		return
 	_refresh_all()
 
@@ -1211,27 +1261,32 @@ func _update_hover() -> void:
 	_distance_label.visible = true
 
 
-## Charge mode: the charge path to the enemy under the cursor (or the
-## scripted hover point), with what it needs.
+## Charge mode: the enemy under the cursor (or the scripted hover point) is
+## only highlighted; nothing is worked out for it (ruling 2 of brief 008c).
+## The selected target's route is drawn once it is ready, with what it needs.
 func _update_charge_hover() -> void:
-	var target: int = -1
-	if _confirming == &"charge":
-		target = _charge_target
-	elif _hover_override != null:
-		target = _model_near(_hover_override)
+	var hovered: int = -1
+	if _hover_override != null:
+		hovered = _model_near(_hover_override)
 	else:
 		var mouse: Vector2 = get_viewport().get_mouse_position()
 		if not _over_ui(mouse):
-			target = _pick_model(mouse)
-	if target == -1 or not _charge_plans.has(target):
+			hovered = _pick_model(mouse)
+	if hovered != -1 and not _charge_declarations.has(hovered):
+		hovered = -1
+	_set_charge_hover(hovered)
+	var plan: ChargePlan = _charge_plan
+	if _charge_target == -1:
 		_preview.hide_all()
 		_distance_label.visible = false
 		return
-	var plan: ChargePlan = charge_plans()[target]
 	var model: ModelState = state.get_model(_selected_id)
-	if plan.path.is_empty():
+	if plan == null:
 		_preview.hide_all()
-		_distance_label.text = "Model %d: %s" % [target, plan.label()]
+		_distance_label.text = "Charge model %d: working out the route…" % _charge_target
+	elif plan.path.is_empty():
+		_preview.hide_all()
+		_distance_label.text = "Model %d: %s" % [_charge_target, plan.label()]
 	else:
 		var drawn: Array = _charge_display_path(model, plan)
 		var shown: Array[Vector3] = drawn[0]
@@ -1245,12 +1300,28 @@ func _update_charge_hover() -> void:
 		for roll: Dictionary in plan.rolls:
 			roll_points.append(roll["at"])
 		_preview.show_roll_points(roll_points)
-		var text: String = "Charge model %d: %.1f\" - %s" % [target, plan.length, plan.label()]
+		var text: String = "Charge model %d: %.1f\" - %s" % [_charge_target, plan.length, plan.label()]
 		if plan.interposed():
-			text = "Model %d is in the way of model %d: charges it instead\n%.1f\" - %s" % [plan.interposers[0], target, plan.length, plan.label()]
+			text = "Model %d is in the way of model %d: charges it instead\n%.1f\" - %s" % [plan.interposers[0], _charge_target, plan.length, plan.label()]
 		_distance_label.text = text
-	_distance_label.position = _camera.unproject_position(state.get_model(target).position) + Vector2(18, -60)
+	_distance_label.position = _camera.unproject_position(state.get_model(_charge_target).position) + Vector2(18, -60)
 	_distance_label.visible = true
+
+
+## Highlights the enemy under the cursor in charge mode (-1: none).
+func _set_charge_hover(id: int) -> void:
+	if id == _charge_hover:
+		return
+	if _charge_hover != -1 and _views.has(_charge_hover):
+		_views[_charge_hover].set_highlighted(false)
+	_charge_hover = id
+	if id != -1 and _views.has(id):
+		_views[id].set_highlighted(true)
+
+
+## The enemy highlighted under the cursor in charge mode, or -1.
+func charge_hover() -> int:
+	return _charge_hover
 
 
 ## A charge route as drawn: climbs straight up and down (see _shown_path()),
