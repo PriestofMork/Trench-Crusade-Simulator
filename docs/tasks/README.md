@@ -9,6 +9,12 @@ Open a new session in this folder and say:
 
 > Implement `docs/tasks/NNN-name.md`. Read `CLAUDE.md` and `docs/design.md` first.
 
+## Checking in the running game
+
+Capture tools (`tools/capture_*.gd`) are slow (all of them together take 15 to 20
+minutes). A session runs only the tools for the area its brief touches, plus its
+own new ones. All of them are run only when a brief asks for it.
+
 ## What a session reports back
 
 - What was built, and the test output.
@@ -29,7 +35,7 @@ Open a new session in this folder and say:
 | `008-line-of-sight.md` | Done |
 | `008b-charge-corrections-and-down.md` | Done |
 | `008c-charge-planning-on-demand.md` | Done |
-| `008d-split-main.md` | Ready |
+| `008d-split-main.md` | Done |
 
 ## Planned next (not yet written)
 
