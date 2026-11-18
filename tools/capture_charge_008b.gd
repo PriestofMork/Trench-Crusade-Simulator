@@ -46,24 +46,24 @@ func _rig(rolls: Array) -> void:
 
 
 ## Charge mode for `charger` with the toggle as wanted (clicking its
-## button), then the target hovered, clicked and confirmed with a click; the
-## dice rigged just before the confirmation.
+## button), then the target clicked (its route is worked out on the click,
+## brief 008c) and confirmed with a click; the dice rigged just before the
+## confirmation.
 func _declare(charger: int, target: int, allow_rolls: bool, rolls: Array, prefix: String) -> void:
 	await _click_model(charger)
 	await _reach()
 	_key(KEY_G)
 	await _charges()
-	print("charge options for model %d: %.0f ms" % [charger, _main.charge_build_ms])
-	if _main.is_charge_rolls() != allow_rolls:
+	print("charge options for model %d: %.0f ms" % [charger, _main.charge.build_ms])
+	if _main.charge.is_rolls() != allow_rolls:
 		await _click_control(_main.hud().find_child("ChargeRollsButton", true, false))
 		await _frames(3)
-	_check(_main.is_charge_rolls() == allow_rolls, "climbs and jumps %s" % ("on" if allow_rolls else "off"))
-	await _hover_model(target)
-	await _shot(prefix + "_a_hover_route")
-	print("hover: ", _label_text())
+	_check(_main.charge.is_rolls() == allow_rolls, "climbs and jumps %s" % ("on" if allow_rolls else "off"))
 	await _click_model(target)
-	await _frames(3)
-	await _shot(prefix + "_b_confirm")
+	await _charges()
+	_check(_main.charge.target() == target and _main.charge.plan() != null, "the route to %d is shown" % target)
+	await _shot(prefix + "_a_route_and_confirm")
+	print("route: ", _label_text())
 	print("confirm: ", _main.confirm_text().replace("\n", " / "))
 	_rig(rolls)
 	await _click_control(_main.find_child("ConfirmMoveButton", true, false))
@@ -279,7 +279,7 @@ func _pass_with(id: int) -> void:
 func _charges() -> void:
 	await _frames(2)
 	for i: int in 900:
-		if _main.is_charge_ready():
+		if _main.charge.is_ready():
 			break
 		await process_frame
 	await _frames(3)
@@ -295,7 +295,7 @@ func _idle() -> void:
 func _reach() -> void:
 	await _idle()
 	for i: int in 900:
-		if not _main.has_move_preview() or _main.is_reach_ready():
+		if not _main.move.has_move_preview() or _main.move.is_reach_ready():
 			return
 		await process_frame
 

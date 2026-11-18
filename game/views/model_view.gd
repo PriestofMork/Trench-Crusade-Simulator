@@ -226,6 +226,29 @@ static func jump_arc(a: Vector3, b: Vector3, to_middle_only: bool = false) -> Ar
 	return points
 
 
+## A path as it is drawn and played, from its points (start first) and how
+## each segment is taken: climbs straight up or down the wall at the touch
+## point, drops off the edge then straight down, jumps along an arc.
+static func shown_path(path: Array[Vector3], kinds: Array) -> Array[Vector3]:
+	var shown: Array[Vector3] = [path[0]]
+	for i: int in range(1, path.size()):
+		var a: Vector3 = path[i - 1]
+		var b: Vector3 = path[i]
+		var kind: Transitions.Kind = kinds[i - 1] if i - 1 < kinds.size() else Transitions.Kind.WALK
+		match kind:
+			Transitions.Kind.GAP_JUMP:
+				shown.append_array(jump_arc(a, b))
+			Transitions.Kind.WALK, Transitions.Kind.NONE:
+				shown.append(b)
+			_:
+				if b.y > a.y:
+					shown.append(Vector3(a.x, b.y, a.z))
+				else:
+					shown.append(Vector3(b.x, a.y, b.z))
+				shown.append(b)
+	return shown
+
+
 ## Distance along the ray to where it hits this model's cylinder, or INF if it misses.
 ## `direction` must be normalised for the result to be in inches.
 func ray_hit_distance(origin: Vector3, direction: Vector3) -> float:

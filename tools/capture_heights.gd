@@ -61,7 +61,7 @@ func _run() -> void:
 	# Click the far platform: the route is pinned and waits for confirmation.
 	_click_world(Vector3(10.5, 4, 5))
 	await _frames(4)
-	print("pinned: ", _main.pinned_destination())
+	print("pinned: ", _main.move.pinned_destination())
 	await _shot("03_orange_click_asks_for_confirmation")
 	_rig(state, [SUCCESS])
 	_key(KEY_ENTER)
@@ -84,7 +84,7 @@ func _run() -> void:
 	_click_world(Vector3(6, 4, 26))
 	await _frames(4)
 	_rig(state, [FAILURE])
-	_main.confirm_pinned()
+	_main.move.confirm_pinned()
 	await _idle()
 	await _shot("07_failed_climb_stays_at_the_foot")
 	print("after failed climb: model 14 at %s, active %d" % [state.get_model(14).position, state.turn.active_model_id])
@@ -194,7 +194,7 @@ func _run() -> void:
 	print("model 8 down %s, active %d" % [state.get_model(8).down, state.turn.active_model_id])
 
 	# 9. The rest of turn 1: everyone else ends their activations.
-	for guard: int in 30:
+	for guard: int in 100:
 		if state.turn.turn != 1:
 			break
 		var player: int = state.turn.player_to_act
@@ -274,7 +274,7 @@ func _idle() -> void:
 func _reach() -> void:
 	await _idle()
 	for i: int in 900:
-		if not _main.has_move_preview() or _main.is_reach_ready():
+		if not _main.move.has_move_preview() or _main.move.is_reach_ready():
 			return
 		await process_frame
 

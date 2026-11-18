@@ -51,27 +51,32 @@ func _run() -> void:
 	_key(KEY_G)
 	await _charges()
 	await _shot("03_charge_mode_labels")
-	var plans: Dictionary[int, ChargePlan] = _main.charge_plans()
-	_check(plans.has(16) and plans[16].label() == "certain", "16 is a certain charge")
-	_check(plans.has(17) and plans[17].label() == "needs 2+", "17 needs 2+ (%s)" % (plans[17].label() if plans.has(17) else "-"))
-	_check(plans.has(20) and not plans[20].contact, "20 on the sheer wall: no roll-free way to contact (%s)" % (plans[20].label() if plans.has(20) else "-"))
-	_check(plans.has(19) and plans[19].reachable(), "19 on the crate can be charged")
-	await _hover_model(16)
-	await _shot("04_hover_certain_charge_path")
-	_check(_label_text().contains("certain"), "hover label: %s" % _label_text())
-	await _hover_model(17)
-	await _shot("05_hover_charge_needs_a_roll")
-	_check(_label_text().contains("needs 2+"), "hover label: %s" % _label_text())
-	await _hover_model(19)
-	await _shot("06_hover_target_on_the_crate")
-	await _hover_model(20)
-	await _shot("07_hover_target_on_the_sheer_wall_out_of_reach")
-	_check(_label_text().contains("no base contact"), "hover label: %s" % _label_text())
+	_check(_main.charge.declarations().size() >= 4, "enemies in range labelled (%d)" % _main.charge.declarations().size())
+	# Each target's route is worked out when it is clicked (brief 008c).
+	var plan: ChargePlan = await _route(16)
+	_check(plan != null and plan.label() == "certain", "16 is a certain charge")
+	await _shot("04_click_certain_charge_path")
+	_check(_label_text().contains("certain"), "label: %s" % _label_text())
+	await _cancel()
+	plan = await _route(17)
+	_check(plan != null and plan.label() == "needs 2+", "17 needs 2+ (%s)" % (plan.label() if plan != null else "-"))
+	await _shot("05_click_charge_needs_a_roll")
+	_check(_label_text().contains("needs 2+"), "label: %s" % _label_text())
+	await _cancel()
+	plan = await _route(19)
+	_check(plan != null and plan.reachable(), "19 on the crate can be charged")
+	await _shot("06_click_target_on_the_crate")
+	await _cancel()
+	plan = await _route(20)
+	_check(plan != null and not plan.contact, "20 on the sheer wall: no roll-free way to contact (%s)" % (plan.label() if plan != null else "-"))
+	await _shot("07_click_target_on_the_sheer_wall_out_of_reach")
+	_check(_label_text().contains("no base contact"), "label: %s" % _label_text())
+	await _cancel()
 
 	# 3. A certain charge: click 16, confirm with a click, the D6 rolls.
 	var before_charge: int = state.history.size()
 	await _click_model(16)
-	await _frames(3)
+	await _charges()
 	await _shot("08_confirm_certain_charge")
 	_check(_main.confirm_text().contains("Charge model 16"), "confirmation: %s" % _main.confirm_text().replace("\n", " / "))
 	await _click_control(_main.find_child("ConfirmMoveButton", true, false))
@@ -90,7 +95,7 @@ func _run() -> void:
 	await _charges()
 	DiceRig.rig(state, 1, 1, true, 1, 1)
 	await _click_model(17)
-	await _frames(3)
+	await _charges()
 	await _click_control(_main.find_child("ConfirmMoveButton", true, false))
 	await _idle()
 	await _shot("11_charge_needs_2_rolled_1_fails")
@@ -106,7 +111,7 @@ func _run() -> void:
 	await _charges()
 	DiceRig.rig(state, 1, 1, true, 6, 6)
 	await _click_model(17)
-	await _frames(3)
+	await _charges()
 	await _click_control(_main.find_child("ConfirmMoveButton", true, false))
 	await _idle()
 	_look(Vector3(41, 0, 15), 0.0, deg_to_rad(62), 12.0)
@@ -142,12 +147,12 @@ func _run() -> void:
 	await _reach()
 	_key(KEY_G)
 	await _charges()
-	await _hover_model(22)
-	await _shot("15_interposed_charge_label_and_path")
-	_check(_main.charge_plans()[22].target_id == 23, "the charge on 22 goes to 23")
-	_check(_label_text().contains("in the way of model 22"), "hover label: %s" % _label_text())
 	await _click_model(22)
-	await _frames(3)
+	await _charges()
+	await _shot("15_interposed_charge_label_and_path")
+	var interposed: ChargePlan = _main.charge.plan()
+	_check(interposed != null and interposed.target_id == 23, "the charge on 22 goes to 23")
+	_check(_label_text().contains("in the way of model 22"), "label: %s" % _label_text())
 	await _shot("16_interposed_charge_confirmation")
 	_check(_main.confirm_text().contains("model 23 instead"), "confirmation: %s" % _main.confirm_text().replace("\n", " / "))
 	await _click_control(_main.find_child("ConfirmMoveButton", true, false))
@@ -165,7 +170,7 @@ func _run() -> void:
 	await _click_model(24)
 	await _frames(4)
 	await _shot("18_in_melee_cannot_move")
-	_check(not _main.has_move_preview(), "no movement indicator for Move in melee")
+	_check(not _main.move.has_move_preview(), "no movement indicator for Move in melee")
 	var move_button: Button = _main.hud().find_child("Action_move", true, false)
 	_check(move_button.disabled and move_button.tooltip_text.contains("In melee"), "Move disabled: %s" % move_button.tooltip_text)
 	await _click_control(_main.hud().find_child("Action_retreat", true, false))
@@ -186,7 +191,7 @@ func _run() -> void:
 	await _shot("23_retreat_movement_indicator")
 	print("tray after the attacks: ", _main.tray().text())
 	_check(_main.tray().text().contains("model 26 makes a free melee attack") or _main.tray().text().contains("Model 26 makes"), "the tray lists the attacks")
-	_check(_main.has_move_preview(), "the retreat move shows the movement indicator")
+	_check(_main.move.has_move_preview(), "the retreat move shows the movement indicator")
 	var target: Vector3 = Vector3(42.0, 0, 18.0)
 	await _hover_world(target)
 	await _shot("24_retreat_hover_destination")
@@ -245,10 +250,22 @@ func _undo_to(size: int) -> void:
 func _charges() -> void:
 	await _frames(2)
 	for i: int in 900:
-		if _main.is_charge_ready():
+		if _main.charge.is_ready():
 			break
 		await process_frame
 	await _frames(3)
+
+
+## Clicks an enemy in charge mode and waits for its route; returns its plan.
+func _route(id: int) -> ChargePlan:
+	await _click_model(id)
+	await _charges()
+	return _main.charge.plan()
+
+
+func _cancel() -> void:
+	await _click_control(_main.find_child("CancelMoveButton", true, false))
+	await _frames(2)
 
 
 func _idle() -> void:
@@ -261,7 +278,7 @@ func _idle() -> void:
 func _reach() -> void:
 	await _idle()
 	for i: int in 900:
-		if not _main.has_move_preview() or _main.is_reach_ready():
+		if not _main.move.has_move_preview() or _main.move.is_reach_ready():
 			return
 		await process_frame
 

@@ -1,125 +1,40 @@
 extends Node3D
-## Main scene: builds a GameState through commands, shows it, turns clicks and
-## button presses into commands, and plays back the events core returns, in
-## order. Never changes the state directly. Two players share the screen and
-## mouse (hotseat); every prompt names the player who answers it.
+## Main scene: builds a GameState through commands, builds the views, and
+## wires the parts of game/ together: the shared Session (command sender with
+## event playback, undo and redo; selection and picking; background jobs;
+## state-keyed caches; the confirmation prompt; sight) and one controller
+## per interaction mode (game/modes/). Input goes to the active mode; what it
+## does not handle goes to Move, the default. Never changes the state
+## directly. Two players share the screen and mouse (hotseat); every prompt
+## names the player who answers it.
 ##
-## Left click a model: select it (a preview; the activation starts with its
-## first action). Left click inside the blue area: take the Move action there
-## (or make the move a Dash granted); a move may be made in several clicks
-## while it has distance left. Left click inside the orange area (only with
-## rolls): the route and its rolls are pinned and wait for Confirm (or Enter);
-## Escape cancels. C (or the HUD button): switch the selected model's descent
-## mode between Drop and Climb down, which redraws its area. Escape:
-## deselect. O: override panel.
-## G (or the Charge button): charge mode (briefs 007, 008b). Every enemy in
-## range is labelled with what the charge needs ("certain", "needs 4+",
-## "needs 2+, 1 risky roll", "cannot reach"); J (or the button) switches
-## "allow climbs and jumps", C the descent mode; hovering one previews the
-## route, its risky parts orange; clicking it asks for confirmation, then the
-## D6 rolls and the charger moves, rolling on the way. If the charge
-## reaches with distance to spare, the places it may end are an arc around
-## the target's base: hover to see who else would be charged, click to pick
-## (Enter keeps first contact). R (or the Retreat button), in melee: lists
-## the free attacks, asks for confirmation, plays them, then the move.
-## Ctrl+Z / Ctrl+Y: undo / redo (also HUD buttons).
-## While the dice tumble, a click or a key skips to the result.
+## Keys: G (or the Charge button) charge mode; R (or the Retreat button)
+## retreat; C (or the HUD button) the selected model's descent mode, Drop or
+## Climb down; V the sight overview; L the sight debug view; O the override
+## panel; Enter / Esc confirm or cancel the confirmation panel (Esc otherwise
+## leaves the mode, or deselects); Ctrl+Z / Ctrl+Y undo / redo (also HUD
+## buttons). While the dice tumble, a click or a key skips to the result.
+## What hovering and clicking do in each mode is in that mode's script.
 
-const TABLE_THICKNESS: float = 1.0
 ## The table set-up loaded at start (terrain and models).
 const TABLE_FILE: String = "res://data/tables/height_test_table.json"
-## The action a click on the table takes.
-const CLICK_ACTION: StringName = &"move"
-const TRAY_WIDTH: float = 420.0
-## The orange of risky routes, for rich text.
-const GHOST_RISKY_HTML: String = "ff9933"
 
 var state: GameState
-
-var _views: Dictionary[int, ModelView] = {}
-var _selected_id: int = -1
-var _reach: ReachField
-var _reach_key: String = ""
-## Built reach fields by key (model, budget, position, descent mode), each
-## [field, layers, indicator mesh], so switching the descent mode back or
-## selecting a model again is instant. Emptied whenever the state changes.
-var _reach_cache: Dictionary[String, Array] = {}
-## Descent mode per model id (Drop if not set).
-var _descent: Dictionary[int, Transitions.DescentMode] = {}
-var _indicator: MovementIndicator
-var _preview: PathPreview
-var _distance_label: Label
-var _hud: Hud
-var _tray: DiceTray
-var _overrides: OverridePanel
-## When set, hover follows this 3D point instead of the mouse (for scripted screenshots).
-var _hover_override: Variant = null
-## An orange destination waiting for confirmation (ruling 7 of brief 006), or null.
-var _pinned: Variant = null
-var _confirm_panel: PanelContainer
-var _confirm_label: RichTextLabel
-## What the confirmation panel is asking about: &"move" (a pinned orange
-## move), &"charge" or &"retreat"; &"" when it is closed.
-var _confirming: StringName = &""
-## Melee links, enemy zones, charge labels and the contact arc.
-var _melee_view: MeleeView
-## Brief 008: the sight line on hover, the overview and the debug cylinders.
-var _sight_view: SightView
-## Sight answers for the current state, "viewer>target" -> result. Dropped
-## whenever the state changes; never worked out by a view.
-var _sight_cache: Dictionary[String, SightResult] = {}
-## The sight overview (V): marks what the selected model sees, dims the rest.
-var _sight_overview: bool = false
-## The debug view (L): every model's sight cylinder, tilted.
-var _sight_debug: bool = false
-## The enemy under the cursor while a model is selected, or -1.
-var _sight_hover: int = -1
-
-## Charge mode (briefs 007, 008b, 008c): on while the selected model picks a
-## target. Opening it only runs the declaration check (every enemy in range:
-## can it be declared?). The route is worked out for the clicked target
-## alone, on a worker thread; core keeps it (GameState.charge_routes()), so
-## clicking the same target again, or declaring it, searches nothing.
-var _charge_mode: bool = false
-## Enemy in range -> "" if it can be declared, else why not.
-var _charge_declarations: Dictionary[int, String] = {}
-var _charge_task: int = -1
-## What the running task works out: "target:rolls:mode".
-var _charge_task_key: String = ""
-## "Allow climbs and jumps" (ruling 2 of brief 008b): off by default.
-var _charge_rolls: bool = false
-## How long opening charge mode took (the declaration check), and the last
-## route worked out (on the worker), ms.
-var charge_build_ms: float = 0.0
-var charge_route_ms: float = 0.0
-var _charge_started_usec: int = 0
-## The selected target (the one whose route is shown and asked to
-## confirm), or -1; its plan for the current route choice, null while it is
-## being worked out.
-var _charge_target: int = -1
-var _charge_plan: ChargePlan = null
-## The enemy highlighted under the cursor in charge mode, or -1.
-var _charge_hover: int = -1
-## The contact position under the cursor (CHARGE_CONTACT), or -1.
-var _contact_hover: int = -1
-## The free attacks of the retreat being played, as tray lines.
-var _free_attack_lines: PackedStringArray = PackedStringArray()
-## FREE_ATTACK_ORDER: the attackers picked so far, in order.
-var _attack_order: Array[int] = []
-
-## Events waiting to be played back, and whether one is playing (dice, a slide).
-var _queue: Array[GameEvent] = []
-var _playing: bool = false
 ## Every event played, for logs and scripted checks.
-var event_log: Array[GameEvent] = []
+var event_log: Array[GameEvent]:
+	get:
+		return _session.sender.event_log
 
-# The reach field is built on a worker thread so selecting stays responsive.
-var _reach_task: int = -1
-var _reach_task_key: String = ""
-var _reach_started_usec: int = 0
-var _built_mutex: Mutex = Mutex.new()
-var _built_field: ReachField = null
-var _built_layers: Array[ReachField.Layer] = []
+## The mode controllers and the sight helper (public for scripted checks).
+var move: MoveMode
+var charge: ChargeMode
+var contact: ContactMode
+var retreat: RetreatMode
+var sight: SightOverlay
+
+var _session: Session = Session.new()
+var _mode: InteractionMode
+var _overrides: OverridePanel
 
 @onready var _camera: TableCamera = $TableCamera
 @onready var _table_root: Node3D = $Table
@@ -128,691 +43,173 @@ var _built_layers: Array[ReachField.Layer] = []
 
 func _ready() -> void:
 	state = GameState.new(1)
-	_build_table()
+	_session.state = state
+	_session.camera = _camera
+	TableBuilder.build_table(_table_root, state)
 	for command: Command in TableSetup.commands(TableSetup.load_file(TABLE_FILE)):
 		var error: String = state.execute(command)
 		if error != "":
 			push_error("Table set-up rejected: %s" % error)
-	_build_terrain_views()
-	_build_model_views()
-	_build_overlays()
+	TableBuilder.build_views(_table_root, _models_root, state, _session.views)
+	var layer: CanvasLayer = TableBuilder.build_overlays(self, _session)
+	_overrides = OverridePanel.new()
+	_overrides.send = func(command: Command) -> void: _session.send(command)
+	layer.add_child(_overrides)
+	_build_session()
 	_camera.set_table_bounds(state.table_width, state.table_depth)
-	send(StartGameCommand.new())
+	_session.send(StartGameCommand.new())
 
 
 func _exit_tree() -> void:
-	if _reach_task != -1:
-		WorkerThreadPool.wait_for_task_completion(_reach_task)
-		_reach_task = -1
-	_wait_for_charge_task()
+	_session.dispose()
 
 
 func _unhandled_input(event: InputEvent) -> void:
+	var tray_view: DiceTray = _session.tray
 	if event is InputEventMouseButton:
 		var button: InputEventMouseButton = event
 		if not button.pressed:
 			return
-		if _tray.is_animating():
-			_tray.skip()
+		if tray_view.is_animating():
+			tray_view.skip()
 			return
 		if button.button_index == MOUSE_BUTTON_LEFT and not is_busy():
-			_on_left_click(button.position)
+			if not _mode.click(button.position):
+				move.click(button.position)
 	elif event is InputEventKey:
 		var key: InputEventKey = event
 		if not key.pressed or key.echo:
 			return
-		if _tray.is_animating():
-			_tray.skip()
+		if tray_view.is_animating():
+			tray_view.skip()
 			return
-		if key.ctrl_pressed and key.physical_keycode == KEY_Z:
-			if key.shift_pressed:
-				redo()
-			else:
-				undo()
-		elif key.ctrl_pressed and key.physical_keycode == KEY_Y:
-			redo()
-		elif key.physical_keycode == KEY_ENTER or key.physical_keycode == KEY_KP_ENTER:
-			if _confirming != &"":
-				confirm()
-			elif _contact_pending():
-				choose_contact(state.pending.default_index)
-		elif key.physical_keycode == KEY_ESCAPE:
-			if _confirming != &"":
-				cancel_confirm()
-			elif _charge_mode:
-				exit_charge_mode()
-			else:
-				deselect()
-		elif key.physical_keycode == KEY_G and not key.ctrl_pressed:
-			toggle_charge_mode()
-		elif key.physical_keycode == KEY_R and not key.ctrl_pressed:
-			request_retreat()
-		elif key.physical_keycode == KEY_J and not key.ctrl_pressed:
-			toggle_charge_rolls()
-		elif key.physical_keycode == KEY_C and not key.ctrl_pressed:
-			toggle_descent_mode()
-		elif key.physical_keycode == KEY_O:
-			toggle_overrides()
-		elif key.physical_keycode == KEY_V and not key.ctrl_pressed:
-			toggle_sight_overview()
-		elif key.physical_keycode == KEY_L and not key.ctrl_pressed:
-			toggle_sight_debug()
+		_on_key(key)
+
+
+func _on_key(key: InputEventKey) -> void:
+	var code: Key = key.physical_keycode
+	var prompt: ConfirmPrompt = _session.prompt
+	if key.ctrl_pressed and code == KEY_Z:
+		if key.shift_pressed:
+			_session.sender.redo()
+		else:
+			_session.sender.undo()
+	elif key.ctrl_pressed and code == KEY_Y:
+		_session.sender.redo()
+	elif (code == KEY_ENTER or code == KEY_KP_ENTER) and prompt.is_open():
+		prompt.confirm()
+	elif code == KEY_ESCAPE and prompt.is_open():
+		prompt.cancel()
+	elif _mode.key(key):
+		pass
+	elif code == KEY_ESCAPE:
+		deselect()
+	elif code == KEY_O:
+		toggle_overrides()
+	elif key.ctrl_pressed:
+		pass
+	elif code == KEY_G:
+		toggle_charge_mode()
+	elif code == KEY_R:
+		enter_mode(retreat)
+	elif code == KEY_C:
+		toggle_descent_mode()
+	elif code == KEY_V:
+		sight.toggle_overview()
+	elif code == KEY_L:
+		sight.toggle_debug()
 
 
 func _process(_delta: float) -> void:
-	_collect_reach()
-	_collect_charges()
-	_update_hover()
+	_session.jobs.poll()
+	if _session.selection.id != -1 and not is_busy():
+		if not _mode.hover():
+			move.hover()
 	var view: Vector2 = get_viewport().get_visible_rect().size
-	_tray.size.y = 0.0
-	_tray.position = Vector2(view.x - TRAY_WIDTH - 16.0, 16.0)
+	_session.tray.size.y = 0.0
+	_session.tray.position = Vector2(view.x - TableBuilder.TRAY_WIDTH - 16.0, 16.0)
 	_overrides.size.y = 0.0
 	_overrides.position = Vector2(16.0, 150.0)
-	_confirm_panel.size = Vector2(0.0, 0.0)
-	_confirm_panel.position = Vector2((view.x - _confirm_panel.size.x) / 2.0, view.y - _confirm_panel.size.y - 24.0)
 
 
-## Runs a command and plays back its events. Returns "" or why it was rejected.
-func send(command: Command) -> String:
-	# A charge route on the worker reads the state: let it finish first.
-	_wait_for_charge_task()
-	var result: CommandResult = state.submit(command)
-	if not result.ok():
-		_hud.show_message("[color=#%s]%s[/color]" % [UiStyle.BAD_COLOUR.to_html(false), result.error])
+## Opens `mode`, leaving the active one. Returns "" or why it cannot open.
+func enter_mode(mode: InteractionMode) -> String:
+	var error: String = mode.enter_error()
+	if error == "":
+		_switch_to(mode)
+	return error
+
+
+func toggle_charge_mode() -> String:
+	if _mode == charge:
+		_leave_mode()
 		_refresh_all()
-		return result.error
-	_state_changed()
-	_hud.show_message("")
-	_queue.append_array(result.events)
-	_pump()
-	return ""
+		return ""
+	return enter_mode(charge)
 
 
-## Whether events are still being played back (input to the table waits).
-func is_busy() -> bool:
-	return _playing or not _queue.is_empty()
+func _switch_to(mode: InteractionMode) -> void:
+	_mode.exit()
+	_mode.active = false
+	_mode = mode
+	_mode.active = true
+	_mode.enter()
+
+
+## Back to the default mode (Move), which starts afresh.
+func _leave_mode() -> void:
+	_switch_to(move)
 
 
 ## Selects a model to preview it: its panel, and where Move would take it.
 func select_model(id: int) -> void:
-	if _charge_mode and id != _selected_id:
-		exit_charge_mode()
-	if _selected_id != -1 and _views.has(_selected_id):
-		_views[_selected_id].set_selected(false)
-	_selected_id = id
-	_views[id].set_selected(true)
+	if id != _session.selection.id:
+		_leave_mode()
+	_session.selection.set_id(id)
 	_refresh_all()
 
 
 func deselect() -> void:
-	if _charge_mode:
-		exit_charge_mode()
-	if _selected_id != -1 and _views.has(_selected_id):
-		_views[_selected_id].set_selected(false)
-	_selected_id = -1
-	_sight_hover = -1
-	_sight_view.hide_line()
-	_unpin()
+	_leave_mode()
+	_session.selection.set_id(-1)
+	sight.clear_hover()
 	_refresh_all()
 
 
 func selected_model_id() -> int:
-	return _selected_id
+	return _session.selection.id
 
 
-## What a click on a destination does: a blue one moves at once; an orange
-## one (only with rolls) is pinned with its route and rolls and waits for
-## confirm_pinned() (ruling 7). Returns "" or why not.
-func request_move_to(point: Vector3) -> String:
-	if _selected_id == -1 or _reach == null or is_busy():
-		return "No model selected."
-	if not _reach.is_reachable(point):
-		return "Out of reach."
-	if _reach.needs_rolls(point):
-		_pin(point)
-		return ""
-	_unpin()
-	return move_selected_to(point)
+## Whether events are still being played back (input to the table waits).
+func is_busy() -> bool:
+	return _session.is_busy()
 
 
-## The pinned orange destination, or null.
-func pinned_destination() -> Variant:
-	return _pinned
-
-
-## Makes the pinned move.
-func confirm_pinned() -> String:
-	if _pinned == null:
-		return "Nothing to confirm."
-	var point: Vector3 = _pinned
-	_unpin()
-	return move_selected_to(point)
-
-
-func cancel_pinned() -> void:
-	_unpin()
-	_hud.show_message("Move cancelled.")
-
-
-## What the confirmation panel asks about, done (Confirm or Enter).
-func confirm() -> String:
-	match _confirming:
-		&"move":
-			return confirm_pinned()
-		&"charge":
-			return confirm_charge()
-		&"retreat":
-			return confirm_retreat()
-	return "Nothing to confirm."
-
-
-## Closes the confirmation panel without doing it (Cancel or Escape).
-func cancel_confirm() -> void:
-	match _confirming:
-		&"move":
-			cancel_pinned()
-		&"charge":
-			_close_confirm()
-			_charge_target = -1
-			_charge_plan = null
-			_show_charge_labels()
-			_preview.hide_all()
-			_hud.show_message("Charge not declared. Pick another target, or Esc to leave charge mode.")
-		&"retreat":
-			_close_confirm()
-			_hud.show_message("Retreat cancelled.")
-
-
-## The confirmation panel's question, or "" when it is closed (for scripted checks).
-func confirm_text() -> String:
-	return _confirm_label.get_parsed_text() if _confirming != &"" else ""
-
-
-func _ask_confirm(kind: StringName, text: String) -> void:
-	_confirming = kind
-	_confirm_label.text = text
-	_confirm_panel.visible = true
-
-
-func _close_confirm() -> void:
-	_confirming = &""
-	if _confirm_panel != null:
-		_confirm_panel.visible = false
-
-
-func _pin(point: Vector3) -> void:
-	_pinned = point
-	var labels: PackedStringArray = PackedStringArray()
-	for roll: Dictionary in _reach.rolls_to(point):
-		labels.append(String(roll["label"]))
-	_ask_confirm(&"move", "[b]This move needs rolls[/b]\n%s\n%.1f\" of %.1f\"" % [
-		"  -  ".join(labels), _reach.cost_to(point), _reach.budget
-	])
-
-
-func _unpin() -> void:
-	_pinned = null
-	if _confirming == &"move":
-		_close_confirm()
-
-
-## Moves the selected model to `point` along the reach field's path: answers
-## a pending move, or takes the Move action first. Orange destinations move
-## without asking here (request_move_to() asks). Returns "" or why not.
-func move_selected_to(point: Vector3) -> String:
-	if _selected_id == -1 or _reach == null or is_busy():
-		return "No model selected."
-	var path: Array[Vector3] = _reach.path_to(point)
-	if path.is_empty():
-		return "Out of reach."
-	var model: ModelState = state.get_model(_selected_id)
-	if not _move_pending_for(_selected_id):
-		var error: String = send(BeginActionCommand.new(model.player, model.id, CLICK_ACTION))
-		if error != "":
-			return error
-	return send(MoveCommand.new(state.pending.player, model.id, path, _reach.descent_mode))
+## Switches the selected model between Drop and Climb down and redraws its area.
+func toggle_descent_mode() -> void:
+	var selection: Selection = _session.selection
+	if selection.id == -1 or is_busy():
+		return
+	var mode: Transitions.DescentMode = Transitions.DescentMode.CLIMB_DOWN
+	if selection.descent_mode() == Transitions.DescentMode.CLIMB_DOWN:
+		mode = Transitions.DescentMode.DROP
+	selection.set_descent_mode(mode)
+	_session.message("Descent: %s" % Selection.descent_name(mode))
+	_mode.descent_changed()
+	_refresh_all()
 
 
 ## Takes an action with the selected model (the HUD's action buttons).
 ## Charge opens charge mode and Retreat asks for confirmation first.
-func take_action(action_id: StringName) -> String:
-	var model: ModelState = state.get_model(_selected_id)
+func _take_action(action_id: StringName) -> String:
+	var model: ModelState = _session.selection.model()
 	if model == null or is_busy():
 		return "No model selected."
 	if action_id == &"charge":
 		return toggle_charge_mode()
 	if action_id == &"retreat":
-		return request_retreat()
-	return send(BeginActionCommand.new(model.player, model.id, action_id))
-
-
-## Why the selected model may not take `action_id` now, or "".
-func _action_error(action_id: StringName) -> String:
-	var model: ModelState = state.get_model(_selected_id)
-	if model == null:
-		return "No model selected."
-	var error: String = TurnFlow.activation_error(state, model.player, model)
-	if error == "":
-		error = BeginActionCommand.unavailable_reason(state, model, action_id)
-	return error
-
-
-func is_charge_mode() -> bool:
-	return _charge_mode
-
-
-## Whether charge mode is open and no route is being worked out.
-func is_charge_ready() -> bool:
-	return _charge_mode and _charge_task == -1
-
-
-## Enemy in range -> "" if it can be declared, else why not (charge mode).
-func charge_declarations() -> Dictionary[int, String]:
-	return _charge_declarations
-
-
-## The selected target, or -1.
-func charge_target() -> int:
-	return _charge_target
-
-
-## The selected target's plan for the current route choice, or null (none
-## selected, or still being worked out).
-func charge_plan() -> ChargePlan:
-	return _charge_plan
-
-
-## The text of the charge label over `id`, or "" if it has none.
-func charge_label_text(id: int) -> String:
-	return _melee_view.charge_label_text(id)
-
-
-func is_charge_rolls() -> bool:
-	return _charge_rolls
-
-
-## Switches "allow climbs and jumps" in charge mode (J). With a target
-## selected, its route for the other choice is worked out (once; core keeps
-## both).
-func toggle_charge_rolls() -> String:
-	if not _charge_mode:
-		return "Not in charge mode."
-	_charge_rolls = not _charge_rolls
-	_hud.show_message("Charge routes: climbs and jumps %s." % ("allowed (the shortest route of any kind)" if _charge_rolls else "not allowed (the shortest route with no roll)"))
-	if _charge_target != -1:
-		_start_charge_route()
-	_refresh_all()
-	return ""
-
-
-func toggle_charge_mode() -> String:
-	if _charge_mode:
-		exit_charge_mode()
-		return ""
-	return enter_charge_mode()
-
-
-## Charge mode for the selected model: the declaration check for every enemy
-## in range (ruling 1 of brief 008c), then labels. No route yet.
-func enter_charge_mode() -> String:
-	if is_busy():
-		return "Wait for the move to finish."
-	var error: String = _action_error(&"charge")
-	if error != "":
-		_hud.show_message("[color=#%s]Charge: %s[/color]" % [UiStyle.BAD_COLOUR.to_html(false), error])
-		return error
-	_unpin()
-	_clear_reach()
-	_charge_mode = true
-	_charge_rolls = false
-	_charge_target = -1
-	_charge_plan = null
-	_charge_started_usec = Time.get_ticks_usec()
-	_charge_declarations = ChargePlanner.new(state, _selected_id, descent_mode()).declarations()
-	charge_build_ms = (Time.get_ticks_usec() - _charge_started_usec) / 1000.0
-	print("Charge mode for model %d: %.1f ms (declaration check, %d enemies in range)" % [_selected_id, charge_build_ms, _charge_declarations.size()])
-	_show_charge_labels()
-	var unseen: int = 0
-	for id: int in _charge_declarations:
-		if _charge_declarations[id] != "":
-			unseen += 1
-	_hud.show_message("Charge mode: %d enemies in range, %d not visible. Click one to see its route. J: climbs and jumps. Esc leaves." % [
-		_charge_declarations.size(), unseen
-	])
-	_refresh_all()
-	return ""
-
-
-func exit_charge_mode() -> void:
-	if not _charge_mode:
-		return
-	_charge_mode = false
-	_wait_for_charge_task()
-	_charge_declarations = {}
-	_charge_target = -1
-	_charge_plan = null
-	_set_charge_hover(-1)
-	if _confirming == &"charge":
-		_close_confirm()
-	_melee_view.clear_charge_labels()
-	_preview.hide_all()
-	_distance_label.visible = false
-	_hud.show_message("")
-	_refresh_all()
-
-
-## The labels of charge mode (ruling 6 of brief 008c): every enemy in range
-## says whether it can be declared; the selected one what its route needs.
-func _show_charge_labels() -> void:
-	_melee_view.show_charge_declarations(state, _charge_declarations, _charge_target, _charge_plan)
-
-
-## Works out the selected target's route for the current route choice: at
-## once if core already has it, else on a worker thread (the label says "…"
-## until it is ready). A route already being worked out finishes first.
-func _start_charge_route() -> void:
-	if _confirming == &"charge":
-		_close_confirm()
-	_charge_plan = null
-	var planner: ChargePlanner = ChargePlanner.new(state, _selected_id, descent_mode())
-	if planner.is_planned(_charge_target, _charge_rolls):
-		_show_charge_plan(planner.plan(_charge_target, _charge_rolls))
-		return
-	_show_charge_labels()
-	_preview.hide_all()
-	if _charge_task != -1:
-		return
-	# The height field and the sight terrain are shared; build them here so
-	# the worker only reads them.
-	state.height_field()
-	state.sight_terrain()
-	_charge_task_key = _charge_route_key()
-	_charge_started_usec = Time.get_ticks_usec()
-	_charge_task = WorkerThreadPool.add_task(_plan_charge.bind(_selected_id, _charge_target, _charge_rolls, descent_mode()))
-	_hud.show_message("Charge mode: working out the route to model %d…" % _charge_target)
-
-
-func _charge_route_key() -> String:
-	return "%d:%s:%d" % [_charge_target, str(_charge_rolls), descent_mode()]
-
-
-## On a worker thread: only reads the state, which cannot change while it
-## runs (sending a command, undo and redo wait for it). The plan is kept by
-## core's cache, where the main thread then finds it.
-func _plan_charge(charger_id: int, target_id: int, allow_rolls: bool, mode: Transitions.DescentMode) -> void:
-	ChargePlanner.new(state, charger_id, mode).plan(target_id, allow_rolls)
-
-
-func _collect_charges() -> void:
-	if _charge_task == -1 or not WorkerThreadPool.is_task_completed(_charge_task):
-		return
-	WorkerThreadPool.wait_for_task_completion(_charge_task)
-	_charge_task = -1
-	charge_route_ms = (Time.get_ticks_usec() - _charge_started_usec) / 1000.0
-	print("Charge route for model %d -> %s: %.0f ms on a worker" % [_selected_id, _charge_task_key, charge_route_ms])
-	if not _charge_mode or _charge_target == -1:
-		return
-	if _charge_task_key != _charge_route_key():
-		# The selection or the route choice changed meanwhile.
-		_start_charge_route()
-		return
-	_show_charge_plan(ChargePlanner.new(state, _selected_id, descent_mode()).plan(_charge_target, _charge_rolls))
-
-
-func _wait_for_charge_task() -> void:
-	if _charge_task != -1:
-		WorkerThreadPool.wait_for_task_completion(_charge_task)
-		_charge_task = -1
-
-
-## Charge mode: clicking an enemy selects it (if it can be declared) and
-## works out its route; the charge is then confirmed or cancelled.
-func request_charge(target_id: int) -> String:
-	if not _charge_mode:
-		return "Not in charge mode."
-	if not _charge_declarations.has(target_id):
-		_hud.show_message("Model %d cannot be charged: it is not an enemy within 12\" ." % target_id)
-		return "Not a target."
-	var error: String = _charge_declarations[target_id]
-	if error != "":
-		_hud.show_message("[color=#%s]%s[/color]" % [UiStyle.BAD_COLOUR.to_html(false), error])
-		return error
-	_charge_target = target_id
-	_start_charge_route()
-	_refresh_all()
-	return ""
-
-
-## The selected target's route is ready: its label, the route drawn, and
-## the confirmation panel.
-func _show_charge_plan(plan: ChargePlan) -> void:
-	_charge_plan = plan
-	_show_charge_labels()
-	var lines: PackedStringArray = PackedStringArray()
-	lines.append("[b]Charge model %d?[/b]" % plan.declared_id)
-	if plan.interposed():
-		lines.append("[color=#%s]Model %d is in the way: the charge is against model %d instead.[/color]" % [
-			UiStyle.GOLD_COLOUR.to_html(false), plan.interposers[0], plan.target_id
-		])
-	var model: ModelState = state.get_model(_selected_id)
-	if plan.path.is_empty():
-		lines.append("No route: the charger cannot move anywhere (%s)." % plan.label())
-	else:
-		var to: String = "to base contact" if plan.contact else "to the closest place it can stop (no base contact)"
-		lines.append("%.1f\" %s; Movement %s\" + D6 (%s)." % [plan.length, to, str(model.movement), plan.label()])
-	if not plan.rolls.is_empty():
-		var labels: PackedStringArray = PackedStringArray()
-		for roll: Dictionary in plan.rolls:
-			labels.append(String(roll["label"]))
-		lines.append("[color=#%s]Rolls on the way: %s. A failed roll fails the charge.[/color]" % [
-			GHOST_RISKY_HTML, "  -  ".join(labels)
-		])
-	if not plan.reachable():
-		lines.append("[color=#%s]No D6 result reaches: it moves as far as it can and stops outside every enemy's 1\" zone.[/color]" % UiStyle.BAD_COLOUR.to_html(false))
-	lines.append("Climbs and jumps %s. The D6 is rolled once it is declared; the declaration stands whatever the roll." % ("allowed" if _charge_rolls else "not allowed"))
-	_ask_confirm(&"charge", "\n".join(lines))
-	_hud.show_message("Charge model %d: %s. Confirm or Cancel; another enemy to pick it instead." % [plan.declared_id, MeleeView.charge_text(plan)])
-
-
-## Declares the charge waiting for confirmation: the D6 rolls in the tray.
-## Core finds the route it was shown in its cache (ruling 7 of 008c).
-func confirm_charge() -> String:
-	if _charge_target == -1 or _charge_plan == null:
-		return "No charge to confirm."
-	var model: ModelState = state.get_model(_selected_id)
-	var target: int = _charge_target
-	var rolls: bool = _charge_rolls
-	_close_confirm()
-	exit_charge_mode()
-	return send(BeginActionCommand.new(model.player, model.id, &"charge", target, rolls, descent_mode()))
-
-
-func _contact_pending() -> bool:
-	return state.pending != null and state.pending.kind == PendingDecision.Kind.CHARGE_CONTACT
-
-
-## Answers the contact choice: the charger ends at position `index`.
-func choose_contact(index: int) -> String:
-	if not _contact_pending():
-		return "No contact to choose."
-	return send(ChooseContactCommand.new(state.pending.player, index))
-
-
-## Retreat (R or the button): lists the free attacks and asks to confirm.
-func request_retreat() -> String:
-	if is_busy():
-		return "Wait for the move to finish."
-	var error: String = _action_error(&"retreat")
-	if error != "":
-		_hud.show_message("[color=#%s]Retreat: %s[/color]" % [UiStyle.BAD_COLOUR.to_html(false), error])
-		return error
-	var model: ModelState = state.get_model(_selected_id)
-	var enemies: Array[int] = MeleeZone.enemy_ids_within(state, model)
-	var names: PackedStringArray = PackedStringArray()
-	for id: int in enemies:
-		names.append("model %d" % id)
-	var lines: PackedStringArray = PackedStringArray()
-	lines.append("[b]Retreat model %d?[/b]" % model.id)
-	lines.append("Free attacks first: %s%s." % [
-		", ".join(names), " (%s picks the order)" % UiStyle.player_bb(1 - model.player) if enemies.size() > 1 else ""
-	])
-	lines.append("Then it moves up to %.1f\" and must end more than 1\" from every enemy." % TurnFlow.movement_budget(state, model))
-	_ask_confirm(&"retreat", "\n".join(lines))
-	return ""
-
-
-func confirm_retreat() -> String:
-	_close_confirm()
-	var model: ModelState = state.get_model(_selected_id)
-	if model == null:
-		return "No model selected."
-	return send(BeginActionCommand.new(model.player, model.id, &"retreat"))
-
-
-## FREE_ATTACK_ORDER: the enemy player picks the next attacker; once every
-## attacker is picked the order is sent.
-func pick_attacker(attacker_id: int) -> String:
-	var pending: PendingDecision = state.pending
-	if pending == null or pending.kind != PendingDecision.Kind.FREE_ATTACK_ORDER:
-		return "No order to pick."
-	if _attack_order.has(attacker_id) or not pending.model_ids.has(attacker_id):
-		return "Not an attacker left to pick."
-	_attack_order.append(attacker_id)
-	if _attack_order.size() < pending.model_ids.size():
-		_refresh_all()
-		return ""
-	var order: Array[int] = _attack_order.duplicate()
-	_attack_order.clear()
-	return send(ChooseAttackOrderCommand.new(pending.player, order))
-
-
-func end_activation() -> String:
-	var model: ModelState = state.get_model(_selected_id)
-	if model == null or is_busy():
-		return "No model selected."
-	return send(EndActivationCommand.new(model.player, model.id))
-
-
-func stay() -> String:
-	if state.pending == null:
-		return "Nothing to decline."
-	return send(DeclineMoveCommand.new(state.pending.player))
-
-
-func choose_first_player(first: int) -> String:
-	if state.pending == null:
-		return "Nothing to choose."
-	return send(ChooseFirstPlayerCommand.new(state.pending.player, first))
-
-
-func roll_off() -> String:
-	return send(RollOffCommand.new(0))
-
-
-func answer_roll_choice(amounts: Array[int]) -> String:
-	if state.pending == null:
-		return "Nothing to answer."
-	return send(RollChoiceCommand.new(state.pending.player, 0, amounts))
-
-
-## Takes the last step back (not a rule command: core restores its snapshot).
-## The views are brought back in line with the restored state.
-func undo() -> String:
-	if _tray.is_animating():
-		_tray.skip()
-	if is_busy():
-		return "Wait for the move to finish."
-	_wait_for_reach_task()
-	_wait_for_charge_task()
-	if not state.undo():
-		_hud.show_message("Nothing to undo.")
-		return "Nothing to undo."
-	_state_changed()
-	_after_restore("Undone.")
-	return ""
-
-
-## Does the last undone step again; it plays back like any command.
-func redo() -> String:
-	if _tray.is_animating():
-		_tray.skip()
-	if is_busy():
-		return "Wait for the move to finish."
-	_wait_for_reach_task()
-	_wait_for_charge_task()
-	if not state.can_redo():
-		_hud.show_message("Nothing to redo.")
-		return "Nothing to redo."
-	var result: CommandResult = state.redo()
-	_state_changed()
-	if not result.ok():
-		_hud.show_message(result.error)
-		return result.error
-	_hud.show_message("Redone.")
-	_queue.append_array(result.events)
-	_pump()
-	return ""
-
-
-func _after_restore(message: String) -> void:
-	_sight_cache.clear()
-	_unpin()
-	_close_confirm()
-	exit_charge_mode()
-	_attack_order.clear()
-	_clear_reach()
-	_tray.close()
-	# A restored roll waiting on a marker prompt shows it again.
-	var pending: PendingDecision = state.pending
-	if state.active_roll != null:
-		_tray.begin(state.active_roll)
-		if pending != null and pending.kind == PendingDecision.Kind.ROLL_CHOICE:
-			_tray.ask_choice(pending)
-	_hud.show_message(message)
-	_refresh_all()
-
-
-func _wait_for_reach_task() -> void:
-	if _reach_task != -1:
-		WorkerThreadPool.wait_for_task_completion(_reach_task)
-		_reach_task = -1
-		_built_field = null
-
-
-## The selected model's descent mode (how drops of 3" or more are taken).
-func descent_mode() -> Transitions.DescentMode:
-	return _descent.get(_selected_id, Transitions.DescentMode.DROP)
-
-
-## Switches the selected model between Drop and Climb down and redraws its area.
-func toggle_descent_mode() -> void:
-	if _selected_id == -1 or is_busy():
-		return
-	var mode: Transitions.DescentMode = Transitions.DescentMode.CLIMB_DOWN
-	if descent_mode() == Transitions.DescentMode.CLIMB_DOWN:
-		mode = Transitions.DescentMode.DROP
-	_descent[_selected_id] = mode
-	_hud.show_message("Descent: %s" % _descent_name(mode))
-	if _charge_mode:
-		# The selected route depends on it: work it out for this mode.
-		if _charge_target != -1:
-			_start_charge_route()
-		_refresh_all()
-		return
-	_refresh_all()
-
-
-static func _descent_name(mode: Transitions.DescentMode) -> String:
-	return "Climb down" if mode == Transitions.DescentMode.CLIMB_DOWN else "Drop"
-
-
-## The state changed: built reach fields no longer hold, and the status line
-## shows what core waits for now (even while events still play back).
-func _state_changed() -> void:
-	_reach_cache.clear()
-	_sight_cache.clear()
-	_attack_order.clear()
-	_hud.refresh_status(state)
+		return enter_mode(retreat)
+	return _session.send(BeginActionCommand.new(model.player, model.id, action_id))
 
 
 func toggle_overrides() -> void:
@@ -822,864 +219,107 @@ func toggle_overrides() -> void:
 
 ## The UI pieces, for scripted runs that press their buttons.
 func hud() -> Hud:
-	return _hud
+	return _session.hud
 
 
 func tray() -> DiceTray:
-	return _tray
+	return _session.tray
 
 
 func override_panel() -> OverridePanel:
 	return _overrides
 
 
-## Whether the selected model's reach field is ready (it is built in the background).
-func is_reach_ready() -> bool:
-	return _selected_id != -1 and _reach != null and _reach.model_id == _selected_id and _reach_task == -1
+## The shared parts (for tests).
+func session() -> Session:
+	return _session
 
 
-## Whether the selected model shows a movement indicator.
-func has_move_preview() -> bool:
-	return _reach_key != ""
+## The confirmation panel's question, or "" when it is closed (for scripted checks).
+func confirm_text() -> String:
+	return _session.prompt.text()
 
 
-## Where a click on `point` (on a floor) would send the selected model, or null.
-func destination_for(point: Vector3) -> Variant:
-	return _destination_for(point)
+## Closes the confirmation panel without doing it (Cancel or Escape).
+func cancel_confirm() -> void:
+	_session.prompt.cancel()
 
 
 ## Scripted hover for screenshots: a 3D point on a floor, or null to follow the mouse again.
 func set_hover_override(point: Variant) -> void:
-	_hover_override = point
-
-
-func _pump() -> void:
-	while not _playing and not _queue.is_empty():
-		var event: GameEvent = _queue.pop_front()
-		event_log.append(event)
-		print("event: ", event.describe())
-		_play(event)
-	if not _playing and _queue.is_empty():
-		_refresh_all()
-
-
-func _resume() -> void:
-	_playing = false
-	_pump()
-
-
-func _play(event: GameEvent) -> void:
-	match event.kind:
-		GameEvent.Kind.TURN_STARTED:
-			_hud.show_message("Turn %d begins." % event.data["turn"])
-		GameEvent.Kind.FIRST_PLAYER_CHOSEN:
-			_hud.show_message("%s activates first." % UiStyle.player_bb(event.player))
-		GameEvent.Kind.ACTIVATION_STARTED:
-			_tray.close()
-			if _selected_id != event.model_id:
-				select_model(event.model_id)
-		GameEvent.Kind.MODEL_STOOD_UP:
-			_hud.show_message("Model %d stands up: half movement this activation." % event.model_id)
-		GameEvent.Kind.ROLL_REQUESTED:
-			_tray.begin(event.roll)
-		GameEvent.Kind.ROLL_CHOICE_MADE:
-			_tray.add_choice(event)
-		GameEvent.Kind.DECISION_NEEDED:
-			_on_decision(event.decision)
-		GameEvent.Kind.ROLL_RESOLVED:
-			_playing = true
-			_tray.show_result(event.result, _resume)
-		GameEvent.Kind.MODEL_MOVED:
-			_play_move(event)
-		GameEvent.Kind.MODEL_FELL:
-			_play_fall(event)
-		GameEvent.Kind.MOVE_ROLL_POINT:
-			_hud.show_message("Model %d: %s" % [event.model_id, event.data.get("roll", "")])
-		GameEvent.Kind.INJURY_APPLIED:
-			_tray.show_effect(String(event.data.get("short", "")))
-			_hud.show_message(String(event.data.get("text", "")))
-		GameEvent.Kind.MODEL_WENT_DOWN:
-			_views[event.model_id].sync(state.get_model(event.model_id))
-		GameEvent.Kind.MODEL_OUT_OF_ACTION:
-			_views[event.model_id].visible = false
-			if _selected_id == event.model_id:
-				deselect()
-		GameEvent.Kind.MARKERS_GAINED:
-			_hud.show_message("Model %d: %s (+%d)" % [event.model_id, event.data.get("reason", ""), int(event.data.get("count", 0))])
-		GameEvent.Kind.MOVE_STOPPED:
-			_hud.show_message("Model %d's move stops: %s." % [event.model_id, event.data.get("reason", "")])
-		GameEvent.Kind.LEDGE_ROLL:
-			_tray.set_reason(String(event.data.get("reason", "")))
-			_hud.show_message(String(event.data.get("reason", "")))
-		GameEvent.Kind.ACTIVATION_ENDED:
-			var reason: String = event.data.get("reason", "")
-			if reason in ["failed risky roll", "went Down", "taken Out of Action"]:
-				_tray.note_activation_ended()
-				_hud.show_message("Model %d %s: its activation ends." % [
-					event.model_id, "failed a risky roll" if reason == "failed risky roll" else reason
-				])
-		GameEvent.Kind.OVERRIDE_APPLIED:
-			_hud.show_message("Override: %s" % event.data.get("text", ""))
-		GameEvent.Kind.CHARGE_DECLARED:
-			var text: String = "Model %d charges model %d" % [event.model_id, int(event.data["target_id"])]
-			if event.data.get("interposed", false):
-				text = "Model %d charges model %d (in the way of model %d)" % [
-					event.model_id, int(event.data["target_id"]), int(event.data["declared_id"])
-				]
-			_hud.show_message("%s: %s." % [text, event.data.get("label", "")])
-		GameEvent.Kind.CHARGE_DISTANCE:
-			var reaches: bool = event.data["reaches"]
-			_tray.show_effect("%s %.1f\" of %.1f\" needed" % [
-				"Charge reaches:" if reaches else "Charge falls short:", float(event.data["distance"]), float(event.data["length"])
-			])
-		GameEvent.Kind.CHARGE_FAILED:
-			var why: String = String(event.data.get("reason", ""))
-			if why == "not far enough":
-				_tray.show_effect("Charge failed: %.1f\" of %.1f\"" % [float(event.data["distance"]), float(event.data["length"])])
-				_hud.show_message("Model %d's charge falls short; it stops outside every enemy's 1\" zone." % event.model_id)
-			else:
-				# A roll on the way (or going Down) stopped it: the roll in the tray failed the charge.
-				_tray.show_effect("charge failed")
-				_hud.show_message("Model %d's charge fails: %s." % [event.model_id, why])
-		GameEvent.Kind.CHARGED:
-			var charged: Array = event.data["charged"]
-			_hud.show_message("Model %d is in melee: charged %s." % [
-				event.model_id, ", ".join(charged.map(func(id: int) -> String: return "model %d" % id))
-			])
-		GameEvent.Kind.RETREAT_STARTED:
-			_free_attack_lines.clear()
-			_hud.show_message("Model %d retreats." % event.model_id)
-		GameEvent.Kind.FREE_ATTACK:
-			_free_attack_lines.append("Model %d makes a free melee attack against model %d." % [
-				event.model_id, int(event.data["target_id"])
-			])
-			var lines: PackedStringArray = _free_attack_lines.duplicate()
-			if event.data.get("temporary", false):
-				lines.append("[color=#%s](Temporary: attacks are not in the game yet.)[/color]" % UiStyle.DIM_COLOUR.to_html(false))
-			_tray.show_notes("Free attacks", lines)
-			_playing = true
-			get_tree().create_timer(0.7).timeout.connect(_resume)
-		GameEvent.Kind.PLAYER_TO_ACT:
-			pass
-
-
-func _on_decision(decision: PendingDecision) -> void:
-	match decision.kind:
-		PendingDecision.Kind.ROLL_CHOICE:
-			_tray.ask_choice(decision)
-		PendingDecision.Kind.MOVE:
-			if _selected_id != decision.model_id:
-				select_model(decision.model_id)
-		PendingDecision.Kind.CHARGE_CONTACT:
-			if _selected_id != decision.model_id:
-				select_model(decision.model_id)
-			_hud.show_message("Click a spot on the arc to end the charge there (Enter keeps first contact).")
-		PendingDecision.Kind.FREE_ATTACK_ORDER:
-			_attack_order.clear()
-
-
-func _play_move(event: GameEvent) -> void:
-	var raw: Array = event.data["path"]
-	var path: Array[Vector3] = []
-	for point: Vector3 in raw:
-		path.append(point)
-	var shown: Array[Vector3] = _shown_path(path, event.data.get("kinds", []))
-	_clear_reach()
-	_playing = true
-	var end: Vector3 = path[path.size() - 1]
-	_views[event.model_id].slide_along(shown, func() -> void:
-		_views[event.model_id].place_at(end)
-		_resume()
-	)
-
-
-## A failed jump: up the arc to over the gap, straight down, and over to
-## where it can stop.
-func _play_fall(event: GameEvent) -> void:
-	var from: Vector3 = event.data["from"]
-	var over: Vector3 = event.data["over"]
-	var to: Vector3 = event.data["to"]
-	var shown: Array[Vector3] = [from]
-	var far: Vector3 = from + (over - from) * 2.0
-	shown.append_array(ModelView.jump_arc(from, far, true))
-	shown.append(Vector3(over.x, to.y, over.z))
-	shown.append(to)
-	var cause: String = String(event.data.get("reason", ""))
-	_hud.show_message("Model %d falls %.1f\"%s." % [event.model_id, float(event.data["height"]), " (%s)" % cause if cause != "" else ""])
-	_clear_reach()
-	_playing = true
-	_views[event.model_id].slide_along(shown, func() -> void:
-		_views[event.model_id].place_at(to)
-		_resume()
-	)
-
-
-## A path as it is drawn and played, from its points (start first) and how
-## each segment is taken: climbs straight up or down the wall at the touch
-## point, drops off the edge then straight down, jumps along an arc.
-func _shown_path(path: Array[Vector3], kinds: Array) -> Array[Vector3]:
-	var shown: Array[Vector3] = [path[0]]
-	for i: int in range(1, path.size()):
-		var a: Vector3 = path[i - 1]
-		var b: Vector3 = path[i]
-		var kind: Transitions.Kind = kinds[i - 1] if i - 1 < kinds.size() else Transitions.Kind.WALK
-		match kind:
-			Transitions.Kind.GAP_JUMP:
-				shown.append_array(ModelView.jump_arc(a, b))
-			Transitions.Kind.WALK, Transitions.Kind.NONE:
-				shown.append(b)
-			_:
-				if b.y > a.y:
-					shown.append(Vector3(a.x, b.y, a.z))
-				else:
-					shown.append(Vector3(b.x, a.y, b.z))
-				shown.append(b)
-	return shown
+	_session.selection.hover_override = point
 
 
 ## Brings every view in line with the state once the events are played.
 ## Skipped while events are still playing, so nothing shows ahead of them.
+## A pending contact choice opens its mode, and leaving it is answered.
 func _refresh_all() -> void:
-	if _hud == null or is_busy():
+	if _mode == null or is_busy():
 		return
+	if ContactMode.is_pending(state) and _mode != contact:
+		_switch_to(contact)
+	elif not ContactMode.is_pending(state) and _mode == contact:
+		_leave_mode()
+	var selection: Selection = _session.selection
 	for model: ModelState in state.models:
-		var view: ModelView = _views[model.id]
+		var view: ModelView = _session.views[model.id]
 		view.sync(model)
 		view.show_status(model, state.turn.has_activated(model.id), state.turn.active_model_id == model.id, MeleeZone.in_melee(state, model))
-	_hud.refresh(state, _selected_id, descent_mode(), _attack_order, _charge_mode, _charge_rolls)
-	_hud.show_sight_toggles(_sight_overview, _sight_debug)
-	_overrides.refresh(state, _selected_id)
-	_refresh_reach()
-	_refresh_melee()
-	_refresh_sight()
+	_session.hud.refresh(state, selection.id, selection.descent_mode(), retreat.attack_order(), charge.active, charge.is_rolls())
+	_session.hud.show_sight_toggles(sight.is_overview(), sight.is_debug())
+	_overrides.refresh(state, selection.id)
+	_mode.refresh()
+	# Melee links, and the enemy zones while a model is selected to move or charge.
+	_session.melee_view.show_links(state)
+	var selected: ModelState = selection.model()
+	_session.melee_view.show_zones(state, selected if selected != null and _mode.shows_zones() else null)
+	sight.refresh(_mode.shows_sight())
 
 
-## Melee links, enemy zones while a model is selected to move or charge, and
-## the contact arc while a contact is to be chosen.
-func _refresh_melee() -> void:
-	_melee_view.show_links(state)
-	var selected: ModelState = state.get_model(_selected_id)
-	var moving: bool = selected != null and (_reach_key != "" or _charge_mode or _contact_pending())
-	_melee_view.show_zones(state, selected if moving else null)
-	if _contact_pending():
-		_melee_view.show_contact_arc(state.pending.positions)
-	else:
-		_melee_view.clear_contact_arc()
-		_set_contact_hover(-1)
-
-
-func _move_pending_for(id: int) -> bool:
-	var pending: PendingDecision = state.pending
-	return pending != null and pending.kind == PendingDecision.Kind.MOVE and pending.model_id == id
-
-
-## How far the selected model could move now: the pending move's budget, or
-## what the Move action would give if it may take it, else -1.
-func _move_budget(id: int) -> float:
-	var model: ModelState = state.get_model(id)
-	if model == null:
-		return -1.0
-	if _move_pending_for(id):
-		return state.pending.budget
-	if TurnFlow.activation_error(state, model.player, model) != "":
-		return -1.0
-	if BeginActionCommand.unavailable_reason(state, model, CLICK_ACTION) != "":
-		return -1.0
-	return state.rules.action(CLICK_ACTION).behaviour.move_budget_preview(state, model)
-
-
-func _refresh_reach() -> void:
-	var budget: float = _move_budget(_selected_id) if _selected_id != -1 and not _charge_mode else -1.0
-	if budget < 0.0:
-		_clear_reach()
-		return
-	var model: ModelState = state.get_model(_selected_id)
-	var mode: Transitions.DescentMode = descent_mode()
-	var zones: EnemyZones = state.pending.zones if _move_pending_for(_selected_id) else null
-	var key: String = "%d|%.3f|%s|%d|%s" % [_selected_id, budget, str(model.position), mode, zones.describe() if zones != null else ""]
-	if key == _reach_key:
-		return
-	_clear_reach()
-	_reach_key = key
-	if _reach_cache.has(key):
-		var cached: Array = _reach_cache[key]
-		_reach = cached[0]
-		_indicator.mesh = cached[2]
-		print("Reach field for model %d (%.1f\", %s): from the cache" % [_selected_id, budget, _descent_name(mode)])
-		return
-	if _reach_task != -1:
-		# A stale build: let it finish, its result is dropped in _collect_reach().
-		WorkerThreadPool.wait_for_task_completion(_reach_task)
-		_reach_task = -1
-	_built_field = null
-	# The height field is shared; build it here so the worker only reads it.
-	state.height_field()
-	_reach_task_key = key
-	_reach_started_usec = Time.get_ticks_usec()
-	_reach_task = WorkerThreadPool.add_task(_build_reach.bind(_selected_id, budget, mode, zones))
-
-
-func _clear_reach() -> void:
-	_unpin()
-	_reach = null
-	_reach_key = ""
-	_indicator.show_field(null)
-	_preview.hide_all()
-	_distance_label.visible = false
-
-
-## On a worker thread: only reads positions and terrain, which do not change
-## while a field is being built (nothing can move without one).
-func _build_reach(id: int, budget: float, mode: Transitions.DescentMode, zones: EnemyZones = null) -> void:
-	var field: ReachField = ReachField.new(state, id, budget, ReachField.CELL_SIZE, mode, zones)
-	var layers: Array[ReachField.Layer] = field.contour_layers()
-	_built_mutex.lock()
-	_built_field = field
-	_built_layers = layers
-	_built_mutex.unlock()
-
-
-func _collect_reach() -> void:
-	if _reach_task == -1 or not WorkerThreadPool.is_task_completed(_reach_task):
-		return
-	WorkerThreadPool.wait_for_task_completion(_reach_task)
-	_reach_task = -1
-	_built_mutex.lock()
-	var field: ReachField = _built_field
-	var layers: Array[ReachField.Layer] = _built_layers
-	_built_field = null
-	_built_mutex.unlock()
-	if field == null or _reach_task_key != _reach_key:
-		return
-	var computed: int = Time.get_ticks_usec()
-	_reach = field
-	_indicator.show_field(field, layers)
-	_reach_cache[_reach_key] = [field, layers, _indicator.mesh]
-	print("Reach field for model %d (%.1f\", %s): %d states, %.1f ms on a worker, indicator mesh %.1f ms" % [
-		field.model_id, field.budget, _descent_name(field.descent_mode), field.state_count(),
-		(computed - _reach_started_usec) / 1000.0, (Time.get_ticks_usec() - computed) / 1000.0
-	])
-
-
-func _on_left_click(screen_position: Vector2) -> void:
-	var picked: int = _pick_model(screen_position)
-	if _charge_mode:
-		if picked != -1 and state.get_model(picked).player != state.get_model(_selected_id).player:
-			request_charge(picked)
-		elif picked == _selected_id:
-			pass
-		else:
-			exit_charge_mode()
-			if picked != -1:
-				select_model(picked)
-		return
-	if _contact_pending():
-		if _contact_hover != -1:
-			choose_contact(_contact_hover)
-		else:
-			_hud.show_message("Click a spot on the arc around the target (Enter keeps first contact).")
-		return
-	if picked != -1:
-		select_model(picked)
-		return
-	if _selected_id == -1:
-		return
-	if _reach == null:
-		deselect()
-		return
-	var destination: Variant = _destination_for(_floor_point(screen_position))
-	if destination != null:
-		request_move_to(destination)
-	elif _pinned != null:
-		cancel_pinned()
-	else:
-		deselect()
-
-
-func _update_hover() -> void:
-	if _selected_id == -1 or is_busy():
-		return
-	if _charge_mode:
-		_update_charge_hover()
-		return
-	if _contact_pending():
-		_update_contact_hover()
-		return
-	if _update_sight_hover():
-		return
-	if _reach == null:
-		return
-	var point: Variant = _hover_override
-	if _pinned != null:
-		point = _pinned
-	elif point == null:
-		var mouse: Vector2 = get_viewport().get_mouse_position()
-		if _pick_model(mouse) != -1 or _over_ui(mouse):
-			_preview.hide_all()
-			_distance_label.visible = false
-			return
-		point = _floor_point(mouse)
-	if point == null:
-		_preview.hide_all()
-		_distance_label.visible = false
-		return
-	var target: Vector3 = point
-	var model: ModelState = state.get_model(_selected_id)
-	var path: Array[Vector3] = []
-	var destination: Variant = _destination_for(point)
-	if destination != null:
-		target = destination
-		path = _reach.path_to(target)
-	var shown: Array[Vector3] = []
-	var rolls: Array[Dictionary] = []
-	if not path.is_empty():
-		shown = _display_path(model.position, path)
-		shown.remove_at(0)
-		rolls = _reach.rolls_to(target)
-	_preview.show_preview(
-		model.position, shown, target, model.base_radius_inches(), _floor_normal(target), not rolls.is_empty()
+## The shared parts, the modes, and the HUD's and tray's buttons wired to them.
+func _build_session() -> void:
+	var session: Session = _session
+	session.selection = Selection.new(state, _camera, session.views)
+	session.sender = CommandSender.new(session)
+	session.sight = SightOverlay.new(session)
+	session.set_host(_refresh_all, select_model, deselect, func() -> void:
+		_leave_mode()
+		_refresh_all()
 	)
-	var roll_points: Array[Vector3] = []
-	var labels: PackedStringArray = PackedStringArray()
-	for roll: Dictionary in rolls:
-		roll_points.append(roll["at"])
-		labels.append(String(roll["label"]))
-	_preview.show_roll_points(roll_points)
-	if path.is_empty():
-		_distance_label.visible = false
-		return
-	var cost: float = _reach.cost_to(target)
-	var surcharge: float = _reach.surcharge_at(target)
-	_distance_label.text = "%.1f\" of %.1f\"" % [cost, _reach.budget]
-	if surcharge > 0.0:
-		_distance_label.text += "  (incl. %.1f\" to stop on the obstacle)" % surcharge
-	if not labels.is_empty():
-		_distance_label.text = "  -  ".join(labels) + "\n" + _distance_label.text
-		if _pinned == null:
-			_distance_label.text += "   (click to confirm)"
-	_distance_label.position = _camera.unproject_position(target) + Vector2(18, -34)
-	_distance_label.visible = true
-
-
-## Charge mode: the enemy under the cursor (or the scripted hover point) is
-## only highlighted; nothing is worked out for it (ruling 2 of brief 008c).
-## The selected target's route is drawn once it is ready, with what it needs.
-func _update_charge_hover() -> void:
-	var hovered: int = -1
-	if _hover_override != null:
-		hovered = _model_near(_hover_override)
-	else:
-		var mouse: Vector2 = get_viewport().get_mouse_position()
-		if not _over_ui(mouse):
-			hovered = _pick_model(mouse)
-	if hovered != -1 and not _charge_declarations.has(hovered):
-		hovered = -1
-	_set_charge_hover(hovered)
-	var plan: ChargePlan = _charge_plan
-	if _charge_target == -1:
-		_preview.hide_all()
-		_distance_label.visible = false
-		return
-	var model: ModelState = state.get_model(_selected_id)
-	if plan == null:
-		_preview.hide_all()
-		_distance_label.text = "Charge model %d: working out the route…" % _charge_target
-	elif plan.path.is_empty():
-		_preview.hide_all()
-		_distance_label.text = "Model %d: %s" % [_charge_target, plan.label()]
-	else:
-		var drawn: Array = _charge_display_path(model, plan)
-		var shown: Array[Vector3] = drawn[0]
-		shown.remove_at(0)
-		var risky_parts: Array[bool] = drawn[1]
-		_preview.show_preview(
-			model.position, shown, plan.end(), model.base_radius_inches(), Vector3.UP, not plan.rolls.is_empty(),
-			risky_parts, not plan.reachable()
-		)
-		var roll_points: Array[Vector3] = []
-		for roll: Dictionary in plan.rolls:
-			roll_points.append(roll["at"])
-		_preview.show_roll_points(roll_points)
-		var text: String = "Charge model %d: %.1f\" - %s" % [_charge_target, plan.length, plan.label()]
-		if plan.interposed():
-			text = "Model %d is in the way of model %d: charges it instead\n%.1f\" - %s" % [plan.interposers[0], _charge_target, plan.length, plan.label()]
-		_distance_label.text = text
-	_distance_label.position = _camera.unproject_position(state.get_model(_charge_target).position) + Vector2(18, -60)
-	_distance_label.visible = true
-
-
-## Highlights the enemy under the cursor in charge mode (-1: none).
-func _set_charge_hover(id: int) -> void:
-	if id == _charge_hover:
-		return
-	if _charge_hover != -1 and _views.has(_charge_hover):
-		_views[_charge_hover].set_highlighted(false)
-	_charge_hover = id
-	if id != -1 and _views.has(id):
-		_views[id].set_highlighted(true)
-
-
-## The enemy highlighted under the cursor in charge mode, or -1.
-func charge_hover() -> int:
-	return _charge_hover
-
-
-## A charge route as drawn: climbs straight up and down (see _shown_path()),
-## and which drawn parts need a roll: [points, Array[bool] per drawn segment].
-func _charge_display_path(model: ModelState, plan: ChargePlan) -> Array:
-	var legality: MoveLegality = ChargePlanner.legality_for(state, model, plan.allow_rolls, plan.descent_mode)
-	var shown: Array[Vector3] = [model.position]
-	var risky: Array[bool] = []
-	var previous: Vector3 = model.position
-	for point: Vector3 in plan.path:
-		legality.segment_cost(previous, point)
-		var part: Array[Vector3] = _shown_path([previous, point] as Array[Vector3], [legality.last_kind])
-		var needs_roll: bool = Transitions.needs_roll(legality.last_kind)
-		for i: int in range(1, part.size()):
-			shown.append(part[i])
-			risky.append(needs_roll)
-		previous = point
-	return [shown, risky]
-
-
-## The contact choice: the arc position nearest the cursor, the base it
-## would have there, and the enemies it would count as charging.
-func _update_contact_hover() -> void:
-	var decision: PendingDecision = state.pending
-	var point: Variant = _hover_override
-	if point == null:
-		var mouse: Vector2 = get_viewport().get_mouse_position()
-		point = null if _over_ui(mouse) else _floor_point(mouse)
-	var best: int = -1
-	if point != null:
-		var at: Vector3 = point
-		var best_distance: float = 0.8
-		for i: int in decision.positions.size():
-			var d: float = Vector2(at.x, at.z).distance_to(Vector2(decision.positions[i].x, decision.positions[i].z))
-			if d < best_distance:
-				best_distance = d
-				best = i
-	_set_contact_hover(best)
-
-
-func _set_contact_hover(index: int) -> void:
-	if index == _contact_hover:
-		return
-	_contact_hover = index
-	for view: ModelView in _views.values():
-		view.set_highlighted(false)
-	if index == -1 or not _contact_pending():
-		_melee_view.show_contact_hover(null, 0.0)
-		_distance_label.visible = false
-		return
-	var decision: PendingDecision = state.pending
-	var model: ModelState = state.get_model(decision.model_id)
-	_melee_view.show_contact_hover(decision.positions[index], model.base_radius_inches())
-	var charged: Array = decision.charged_ids[index]
-	for id: int in charged:
-		_views[id].set_highlighted(true)
-	_distance_label.text = "Ends here: charges %s%s" % [
-		", ".join(charged.map(func(id: int) -> String: return "model %d" % id)),
-		"  (first contact)" if index == decision.default_index else ""
-	]
-	_distance_label.position = _camera.unproject_position(decision.positions[index]) + Vector2(18, -34)
-	_distance_label.visible = true
-
-
-## The contact position under the cursor, or -1 (for scripted checks).
-func contact_hover() -> int:
-	return _contact_hover
-
-
-# --- Sight (brief 008) -----------------------------------------------------
-
-
-## Whether `viewer_id` can see `target_id` now, with the clear segment: from
-## core, kept until the state changes.
-func sight(viewer_id: int, target_id: int) -> SightResult:
-	var key: String = "%d>%d" % [viewer_id, target_id]
-	var cached: SightResult = _sight_cache.get(key)
-	if cached != null:
-		return cached
-	var result: SightResult = state.rules.sight.check(state, state.get_model(viewer_id), state.get_model(target_id))
-	_sight_cache[key] = result
-	return result
-
-
-func is_sight_overview() -> bool:
-	return _sight_overview
-
-
-func is_sight_debug() -> bool:
-	return _sight_debug
-
-
-func toggle_sight_overview() -> void:
-	_sight_overview = not _sight_overview
-	_hud.show_message("Sight overview %s." % ("on: green rings mark the enemies the selected model can see" if _sight_overview else "off"))
-	_refresh_all()
-
-
-func toggle_sight_debug() -> void:
-	_sight_debug = not _sight_debug
-	_refresh_all()
-
-
-## The enemy whose sight is shown on hover, or -1 (for scripted checks).
-func sight_hover() -> int:
-	return _sight_hover
-
-
-func sight_view() -> SightView:
-	return _sight_view
-
-
-## The enemies of `viewer` on the table that it can and cannot see.
-func _enemies_by_sight(viewer: ModelState) -> Array:
-	var seen: Array[int] = []
-	var unseen: Array[int] = []
-	for model: ModelState in state.models_on_table():
-		if model.player == viewer.player:
-			continue
-		if sight(viewer.id, model.id).visible:
-			seen.append(model.id)
-		else:
-			unseen.append(model.id)
-	return [seen, unseen]
-
-
-## The overview's hidden enemies of the selected model (empty when it is off).
-func _overview_unseen() -> Array[int]:
-	var selected: ModelState = state.get_model(_selected_id)
-	if not _sight_overview or selected == null or not selected.on_table() or _charge_mode:
-		return [] as Array[int]
-	return _enemies_by_sight(selected)[1]
-
-
-## The overview marks, the dimming and the debug cylinders, from the state.
-func _refresh_sight() -> void:
-	if _sight_view == null:
-		return
-	var selected: ModelState = state.get_model(_selected_id)
-	var seen: Array[int] = []
-	var unseen: Array[int] = []
-	if _sight_overview and selected != null and selected.on_table() and not _charge_mode:
-		var split: Array = _enemies_by_sight(selected)
-		seen = split[0]
-		unseen = split[1]
-	for id: int in _views:
-		_views[id].set_dimmed(unseen.has(id))
-	_sight_view.show_seen(state, seen)
-	_show_not_visible_labels(unseen)
-	if _sight_debug:
-		var cylinders: Array[SightCylinder] = []
-		for model: ModelState in state.models_on_table():
-			cylinders.append(SightCylinder.for_model(state, model))
-		_sight_view.show_cylinders(cylinders)
-	else:
-		_sight_view.hide_cylinders()
-
-
-## "not visible" over the overview's hidden enemies plus the hovered one.
-func _show_not_visible_labels(unseen: Array[int]) -> void:
-	var ids: Array[int] = unseen.duplicate()
-	if _sight_hover != -1 and _selected_id != -1 and not _charge_mode and not ids.has(_sight_hover) and not sight(_selected_id, _sight_hover).visible:
-		ids.append(_sight_hover)
-	_sight_view.show_not_visible(state, ids)
-
-
-## With a model selected (not charging), hovering an enemy shows the sight
-## line to it or marks it not visible. Returns whether an enemy is hovered
-## (the move preview then stays hidden).
-func _update_sight_hover() -> bool:
-	var selected: ModelState = state.get_model(_selected_id)
-	var target: int = -1
-	if _pinned == null and _hover_override == null and selected != null and selected.on_table():
-		var mouse: Vector2 = get_viewport().get_mouse_position()
-		if not _over_ui(mouse):
-			var picked: int = _pick_model(mouse)
-			if picked != -1 and state.get_model(picked).player != selected.player:
-				target = picked
-	if target != _sight_hover:
-		_sight_hover = target
-		_show_not_visible_labels(_overview_unseen())
-	if target == -1:
-		_sight_view.hide_line()
-		return false
-	_preview.hide_all()
-	var result: SightResult = sight(_selected_id, target)
-	if result.visible:
-		_sight_view.show_line(result.from, result.to)
-		_distance_label.text = "Model %d: visible" % target
-	else:
-		_sight_view.hide_line()
-		_distance_label.text = "Model %d: not visible" % target
-	_distance_label.position = _camera.unproject_position(state.get_model(target).position) + Vector2(18, -60)
-	_distance_label.visible = true
-	return true
-
-
-## The model whose base is nearest a table point (within 2"), or -1.
-func _model_near(point: Vector3) -> int:
-	var best: int = -1
-	var best_distance: float = 2.0
-	for model: ModelState in state.models_on_table():
-		var d: float = Vector2(point.x, point.z).distance_to(Vector2(model.position.x, model.position.z))
-		if d < best_distance:
-			best_distance = d
-			best = model.id
-	return best
-
-
-func _over_ui(screen_position: Vector2) -> bool:
-	var hovered: Control = get_viewport().gui_get_hovered_control()
-	return hovered != null and hovered.mouse_filter == Control.MOUSE_FILTER_STOP and hovered.get_global_rect().has_point(screen_position)
-
-
-## The path as it is drawn in the preview: see _shown_path(), with the kinds
-## of its segments from the reach field.
-func _display_path(start: Vector3, path: Array[Vector3]) -> Array[Vector3]:
-	var points: Array[Vector3] = [start]
-	points.append_array(path)
-	var kinds: Array = []
-	for i: int in range(1, points.size()):
-		kinds.append(_reach.segment_kind(points[i - 1], points[i]))
-	return _shown_path(points, kinds)
-
-
-## Up direction of the floor a destination is on: the tilt core gives a
-## model standing there (SightCylinder.tilt_at()).
-func _floor_normal(point: Vector3) -> Vector3:
-	return SightCylinder.tilt_at(state, point)
-
-
-## Where the selected model's centre goes for a point on a floor: the closest
-## valid centre within a base radius, since the indicator shows where the base
-## edge can reach. Null if there is none (or `point` is null).
-func _destination_for(point: Variant) -> Variant:
-	if point == null or _reach == null:
-		return null
-	return _reach.closest_destination(point, _reach.base_radius())
-
-
-## The model under the screen position, or -1. Terrain in front hides it.
-func _pick_model(screen_position: Vector2) -> int:
-	var origin: Vector3 = _camera.project_ray_origin(screen_position)
-	var direction: Vector3 = _camera.project_ray_normal(screen_position)
-	var best_id: int = -1
-	var best_t: float = INF
-	for id: int in _views:
-		var t: float = _views[id].ray_hit_distance(origin, direction)
-		if t < best_t:
-			best_t = t
-			best_id = id
-	var hit: TerrainPicker.Hit = TerrainPicker.pick(state, origin, direction)
-	if hit != null and hit.distance < best_t:
-		return -1
-	return best_id
-
-
-## The point on the table or terrain the screen position points at, or null.
-func _floor_point(screen_position: Variant) -> Variant:
-	var origin: Vector3 = _camera.project_ray_origin(screen_position)
-	var direction: Vector3 = _camera.project_ray_normal(screen_position)
-	var hit: TerrainPicker.Hit = TerrainPicker.pick(state, origin, direction)
-	return hit.point if hit != null else null
-
-
-func _build_table() -> void:
-	var box: BoxMesh = BoxMesh.new()
-	box.size = Vector3(state.table_width, TABLE_THICKNESS, state.table_depth)
-	var material: StandardMaterial3D = StandardMaterial3D.new()
-	material.albedo_color = Color(0.36, 0.31, 0.24)
-	var table: MeshInstance3D = MeshInstance3D.new()
-	table.name = "TableTop"
-	table.mesh = box
-	table.material_override = material
-	# Top face at y = 0; the table spans x in [0, width] and z in [0, depth].
-	table.position = Vector3(state.table_width / 2.0, -TABLE_THICKNESS / 2.0, state.table_depth / 2.0)
-	_table_root.add_child(table)
-
-
-func _build_terrain_views() -> void:
-	for piece: TerrainPiece in state.terrain:
-		var view: TerrainView = TerrainView.new()
-		view.setup(piece)
-		_table_root.add_child(view)
-
-
-func _build_model_views() -> void:
-	for model: ModelState in state.models:
-		var view: ModelView = ModelView.new()
-		view.state = state
-		view.setup(model)
-		_models_root.add_child(view)
-		_views[model.id] = view
-
-
-func _build_overlays() -> void:
-	_indicator = MovementIndicator.new()
-	add_child(_indicator)
-	_preview = PathPreview.new()
-	add_child(_preview)
-	_melee_view = MeleeView.new()
-	add_child(_melee_view)
-	_sight_view = SightView.new()
-	add_child(_sight_view)
-
-	var layer: CanvasLayer = CanvasLayer.new()
-	layer.name = "Ui"
-	add_child(layer)
-	_distance_label = Label.new()
-	_distance_label.name = "DistanceLabel"
-	_distance_label.add_theme_font_size_override("font_size", 22)
-	_distance_label.add_theme_color_override("font_color", Color(0.9, 0.96, 1.0))
-	_distance_label.add_theme_color_override("font_outline_color", Color(0.02, 0.06, 0.12))
-	_distance_label.add_theme_constant_override("outline_size", 6)
-	_distance_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_distance_label.visible = false
-	layer.add_child(_distance_label)
-
-	_hud = Hud.new()
-	layer.add_child(_hud)
-	_hud.action_pressed.connect(func(id: StringName) -> void: take_action(id))
-	_hud.end_activation_pressed.connect(func() -> void: end_activation())
-	_hud.stay_pressed.connect(func() -> void: stay())
-	_hud.first_player_chosen.connect(func(first: int) -> void: choose_first_player(first))
-	_hud.roll_off_pressed.connect(func() -> void: roll_off())
-	_hud.undo_pressed.connect(func() -> void: undo())
-	_hud.redo_pressed.connect(func() -> void: redo())
-	_hud.descent_pressed.connect(func() -> void: toggle_descent_mode())
-	_hud.charge_rolls_pressed.connect(func() -> void: toggle_charge_rolls())
-	_hud.attacker_picked.connect(func(id: int) -> void: pick_attacker(id))
-	_hud.sight_overview_pressed.connect(func() -> void: toggle_sight_overview())
-	_hud.sight_debug_pressed.connect(func() -> void: toggle_sight_debug())
-
-	_tray = DiceTray.new()
-	_tray.custom_minimum_size = Vector2(TRAY_WIDTH, 0)
-	_tray.choice_answered.connect(func(amounts: Array[int]) -> void: answer_roll_choice(amounts))
-	layer.add_child(_tray)
-
-	_confirm_panel = PanelContainer.new()
-	_confirm_panel.name = "ConfirmMove"
-	_confirm_panel.add_theme_stylebox_override("panel", UiStyle.panel(Color(1.0, 0.55, 0.15)))
-	var confirm_box: VBoxContainer = VBoxContainer.new()
-	_confirm_panel.add_child(confirm_box)
-	_confirm_label = UiStyle.rich(17)
-	_confirm_label.custom_minimum_size = Vector2(460, 0)
-	confirm_box.add_child(_confirm_label)
-	var confirm_row: HBoxContainer = HBoxContainer.new()
-	confirm_row.add_theme_constant_override("separation", 8)
-	confirm_box.add_child(confirm_row)
-	var confirm: Button = UiStyle.button("Confirm (Enter)", "ConfirmMoveButton")
-	confirm.pressed.connect(func() -> void: confirm())
-	confirm_row.add_child(confirm)
-	var cancel: Button = UiStyle.button("Cancel (Esc)", "CancelMoveButton")
-	cancel.pressed.connect(func() -> void: cancel_confirm())
-	confirm_row.add_child(cancel)
-	_confirm_panel.visible = false
-	layer.add_child(_confirm_panel)
-
-	_overrides = OverridePanel.new()
-	_overrides.send = func(command: Command) -> void: send(command)
-	layer.add_child(_overrides)
+	sight = session.sight
+	move = MoveMode.new(session)
+	charge = ChargeMode.new(session)
+	contact = ContactMode.new(session)
+	retreat = RetreatMode.new(session)
+	_mode = move
+	move.active = true
+
+	var sender: CommandSender = session.sender
+	sender.restored.connect(_leave_mode)
+	var hud_view: Hud = session.hud
+	hud_view.action_pressed.connect(func(id: StringName) -> void: _take_action(id))
+	hud_view.end_activation_pressed.connect(func() -> void:
+		var model: ModelState = session.selection.model()
+		if model != null and not is_busy():
+			session.send(EndActivationCommand.new(model.player, model.id))
+	)
+	hud_view.stay_pressed.connect(func() -> void:
+		if state.pending != null:
+			session.send(DeclineMoveCommand.new(state.pending.player))
+	)
+	hud_view.first_player_chosen.connect(func(first: int) -> void:
+		if state.pending != null:
+			session.send(ChooseFirstPlayerCommand.new(state.pending.player, first))
+	)
+	hud_view.roll_off_pressed.connect(func() -> void: session.send(RollOffCommand.new(0)))
+	hud_view.undo_pressed.connect(func() -> void: sender.undo())
+	hud_view.redo_pressed.connect(func() -> void: sender.redo())
+	hud_view.descent_pressed.connect(toggle_descent_mode)
+	hud_view.charge_rolls_pressed.connect(func() -> void: charge.toggle_rolls())
+	hud_view.attacker_picked.connect(func(id: int) -> void: retreat.pick_attacker(id))
+	hud_view.sight_overview_pressed.connect(sight.toggle_overview)
+	hud_view.sight_debug_pressed.connect(sight.toggle_debug)
+	session.tray.choice_answered.connect(func(amounts: Array[int]) -> void:
+		if state.pending != null:
+			session.send(RollChoiceCommand.new(state.pending.player, 0, amounts))
+	)

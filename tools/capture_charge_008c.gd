@@ -46,10 +46,10 @@ func _open(charger: int) -> void:
 	var before: int = _searches()
 	_key(KEY_G)
 	await _frames(4)
-	print("charge mode for %d opened in %.1f ms" % [charger, _main.charge_build_ms])
-	_check(_main.is_charge_mode(), "charge mode is open for %d" % charger)
+	print("charge mode for %d opened in %.1f ms" % [charger, _main.charge.build_ms])
+	_check(_main.charge.active, "charge mode is open for %d" % charger)
 	_check(_searches() == before, "opening charge mode searched no route")
-	_check(_main.charge_build_ms < 20.0, "opening took %.1f ms (under 20)" % _main.charge_build_ms)
+	_check(_main.charge.build_ms < 20.0, "opening took %.1f ms (under 20)" % _main.charge.build_ms)
 
 
 ## Clicks the target, waits for its route; returns how many searches it took.
@@ -57,13 +57,13 @@ func _select(target: int) -> int:
 	var before: int = _searches()
 	await _click_model(target)
 	await _frames(1)
-	var waiting: String = _main.charge_label_text(target)
+	var waiting: String = _main.charge.label_text(target)
 	await _charges()
 	print("selected %d: label while working '%s', now '%s'; route %.0f ms on the worker" % [
-		target, waiting, _main.charge_label_text(target), _main.charge_route_ms
+		target, waiting, _main.charge.label_text(target), _main.charge.route_ms
 	])
-	_check(_main.charge_target() == target, "%d is selected" % target)
-	_check(_main.charge_plan() != null, "its route is ready")
+	_check(_main.charge.target() == target, "%d is selected" % target)
+	_check(_main.charge.plan() != null, "its route is ready")
 	_check(_main.confirm_text() != "", "Confirm and Cancel are offered")
 	return _searches() - before
 
@@ -105,11 +105,11 @@ func _run() -> void:
 	# range says "can charge" (or "not visible").
 	_look(Vector3(40, 0, 19), 0.0, deg_to_rad(55), 20.0)
 	await _open(15)
-	var declarations: Dictionary[int, String] = _main.charge_declarations()
+	var declarations: Dictionary[int, String] = _main.charge.declarations()
 	var labels: PackedStringArray = PackedStringArray()
 	var all_plain: bool = true
 	for id: int in declarations:
-		var text: String = _main.charge_label_text(id)
+		var text: String = _main.charge.label_text(id)
 		labels.append("%d: %s" % [id, text])
 		all_plain = all_plain and text == ("can charge" if declarations[id] == "" else "not visible")
 	print("labels: ", ", ".join(labels))
@@ -120,24 +120,24 @@ func _run() -> void:
 	var before: int = _searches()
 	await _hover_model(17)
 	await _frames(6)
-	_check(_main.charge_hover() == 17, "17 is highlighted under the cursor")
+	_check(_main.charge.hovered() == 17, "17 is highlighted under the cursor")
 	_check(_searches() == before, "hovering searched nothing")
-	_check(_main.charge_label_text(17) == "can charge", "17's label is unchanged")
+	_check(_main.charge.label_text(17) == "can charge", "17's label is unchanged")
 	await _shot("02_hover_only_highlights")
 
 	# 3. The near target: clicked, one search, route and label.
 	_check(await _select(16) == 1, "one search for 16")
-	_check(_main.charge_label_text(16) == "certain", "16: %s" % _main.charge_label_text(16))
+	_check(_main.charge.label_text(16) == "certain", "16: %s" % _main.charge.label_text(16))
 	await _shot("03_near_target_selected_certain")
 	print("confirm: ", _main.confirm_text().replace("\n", " / "))
 
 	# 4. Cancel, then the far target across the gap: no D6 reaches.
 	await _click_control(_main.find_child("CancelMoveButton", true, false))
 	await _frames(2)
-	_check(_main.confirm_text() == "" and _main.charge_label_text(16) == "can charge", "cancelled: 16 back to can charge")
+	_check(_main.confirm_text() == "" and _main.charge.label_text(16) == "can charge", "cancelled: 16 back to can charge")
 	_look(Vector3(41, 0, 25), 0.0, deg_to_rad(55), 24.0)
 	_check(await _select(38) >= 1, "38 searched")
-	_check(_main.charge_label_text(38).begins_with("cannot reach"), "38: %s" % _main.charge_label_text(38))
+	_check(_main.charge.label_text(38).begins_with("cannot reach"), "38: %s" % _main.charge.label_text(38))
 	await _shot("04_far_target_selected_cannot_reach")
 	print("confirm: ", _main.confirm_text().replace("\n", " / "))
 
@@ -147,7 +147,7 @@ func _run() -> void:
 	before = _searches()
 	await _click_model(16)
 	await _frames(3)
-	_check(_main.charge_plan() != null and _searches() == before, "16 again: shown at once, no search")
+	_check(_main.charge.plan() != null and _searches() == before, "16 again: shown at once, no search")
 
 	# 6. A declared charge that succeeds: 16, a 2.
 	_look(Vector3(37, 0, 19), 0.0, deg_to_rad(55), 14.0)
@@ -185,9 +185,9 @@ func _run() -> void:
 	_look(Vector3(42, 0, 12), 0.0, deg_to_rad(55), 16.0)
 	await _open(21)
 	_check(await _select(22) == 2, "two searches: to 22, then to the interposer 23")
-	var plan: ChargePlan = _main.charge_plan()
+	var plan: ChargePlan = _main.charge.plan()
 	_check(plan != null and plan.target_id == 23, "23 is charged instead")
-	_check(_main.charge_label_text(22).contains("model 23 in the way"), "22: %s" % _main.charge_label_text(22))
+	_check(_main.charge.label_text(22).contains("model 23 in the way"), "22: %s" % _main.charge.label_text(22))
 	await _shot("07_interposed_target_selected")
 	print("confirm: ", _main.confirm_text().replace("\n", " / "))
 
@@ -209,7 +209,7 @@ func _label_text() -> String:
 func _charges() -> void:
 	await _frames(2)
 	for i: int in 900:
-		if _main.is_charge_ready():
+		if _main.charge.is_ready():
 			break
 		await process_frame
 	await _frames(3)
@@ -225,7 +225,7 @@ func _idle() -> void:
 func _reach() -> void:
 	await _idle()
 	for i: int in 900:
-		if not _main.has_move_preview() or _main.is_reach_ready():
+		if not _main.move.has_move_preview() or _main.move.is_reach_ready():
 			return
 		await process_frame
 

@@ -86,8 +86,8 @@ func _run() -> void:
 		_main.set_hover_override(Vector3(31, 0, 36))
 		await _shot("08_dash_success_move_offered")
 		_main.set_hover_override(null)
-		var destination: Variant = _main.destination_for(Vector3(31, 0, 36))
-		print("dash move: ", _main.move_selected_to(destination) if destination != null else "no destination")
+		var destination: Variant = _main.move.destination_for(Vector3(31, 0, 36))
+		print("dash move: ", _main.move.move_selected_to(destination) if destination != null else "no destination")
 		await _idle()
 		await _shot("09_after_dash_move")
 	if state.turn.active_model_id == 7:
@@ -155,7 +155,7 @@ func _run() -> void:
 	await _idle()
 
 	# 7. The rest of turn 1: each player ends their remaining activations in turn.
-	for guard: int in 20:
+	for guard: int in 100:
 		if state.turn.turn != 1:
 			break
 		var player: int = state.turn.player_to_act
@@ -209,7 +209,7 @@ func _idle() -> void:
 func _reach() -> void:
 	await _idle()
 	for i: int in 600:
-		if not _main.has_move_preview() or _main.is_reach_ready():
+		if not _main.move.has_move_preview() or _main.move.is_reach_ready():
 			return
 		await process_frame
 

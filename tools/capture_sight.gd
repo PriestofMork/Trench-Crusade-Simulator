@@ -35,7 +35,7 @@ func _run() -> void:
 	var state: GameState = _main.state
 	await _click_control(_main.hud().find_child("First0", true, false))
 	await _idle()
-	var sight_view: SightView = _main.sight_view()
+	var sight_view: SightView = _main.sight.view()
 
 	# 1. The sight block, the viewer 27 selected.
 	_look(Vector3(11, 0, 20.5), deg_to_rad(-20), deg_to_rad(52), 17.0)
@@ -46,7 +46,7 @@ func _run() -> void:
 	# 2. Hover an enemy in the open: the sight line.
 	await _hover_model(31)
 	await _shot("02_hover_sight_line_to_31")
-	_check(_main.sight_hover() == 31 and sight_view.has_line(), "a sight line to 31")
+	_check(_main.sight.hovered() == 31 and sight_view.has_line(), "a sight line to 31")
 	_check(_label_text().contains("Model 31: visible"), "hover label: %s" % _label_text())
 
 	# 3. Hover the enemy behind the 3in wall: not visible.
@@ -79,14 +79,14 @@ func _run() -> void:
 	await _frames(4)
 	_look(Vector3(12, 0, 20), deg_to_rad(-10), deg_to_rad(65), 22.0)
 	await _shot("07_sight_overview")
-	_check(_main.is_sight_overview(), "the overview is on")
+	_check(_main.sight.is_overview(), "the overview is on")
 	var unseen: Array[int] = sight_view.not_visible_ids()
 	print("overview: not visible ", unseen)
 	_check(unseen.has(28) and unseen.has(30) and not unseen.has(29) and not unseen.has(31) and not unseen.has(32), "overview marks: %s" % str(unseen))
 	_check((_main.get_node("Models/Model28") as ModelView)._dimmed, "28 dimmed")
 	_key(KEY_V)
 	await _frames(3)
-	_check(not _main.is_sight_overview(), "V turns it off")
+	_check(not _main.sight.is_overview(), "V turns it off")
 
 	# 8. The model on the ramp with the debug cylinders (button).
 	await _click_control(_main.hud().find_child("SightDebugButton", true, false))
@@ -106,7 +106,7 @@ func _run() -> void:
 	_check(view33.drawn_up().distance_to(cyl33.axis) < 1e-4 and cyl33.axis.y < 0.99, "33 drawn tilted as its sight cylinder (%s)" % str(cyl33.axis))
 	_key(KEY_L)
 	await _frames(3)
-	_check(not _main.is_sight_debug(), "L turns it off")
+	_check(not _main.sight.is_debug(), "L turns it off")
 
 	# 9. Charge mode: enemies in range that cannot be seen are labelled, and a
 	# click on one is refused.
@@ -116,10 +116,17 @@ func _run() -> void:
 	_key(KEY_G)
 	await _charges()
 	await _shot("10_charge_mode_not_visible_labels")
-	var plans: Dictionary[int, ChargePlan] = _main.charge_plans()
-	_check(plans.has(28) and plans[28].label() == "not visible", "28: %s" % (plans[28].label() if plans.has(28) else "-"))
-	_check(plans.has(30) and plans[30].label() == "not visible", "30: %s" % (plans[30].label() if plans.has(30) else "-"))
-	_check(plans.has(31) and plans[31].reachable(), "31 can be charged")
+	var declarations: Dictionary[int, String] = _main.charge.declarations()
+	_check(declarations.get(28, "") != "" and _main.charge.label_text(28) == "not visible", "28: %s" % _main.charge.label_text(28))
+	_check(declarations.get(30, "") != "" and _main.charge.label_text(30) == "not visible", "30: %s" % _main.charge.label_text(30))
+	_check(declarations.get(31, "missing") == "", "31 can be declared")
+	# Its route is worked out when it is clicked (brief 008c).
+	await _click_model(31)
+	await _charges()
+	var plan: ChargePlan = _main.charge.plan()
+	_check(plan != null and plan.reachable(), "31 can be charged (%s)" % (plan.label() if plan != null else "-"))
+	await _click_control(_main.find_child("CancelMoveButton", true, false))
+	await _frames(2)
 	var before: int = state.history.size()
 	await _click_model(28)
 	await _frames(4)
@@ -178,7 +185,7 @@ func _undo_to(size: int) -> void:
 func _charges() -> void:
 	await _frames(2)
 	for i: int in 900:
-		if _main.is_charge_ready():
+		if _main.charge.is_ready():
 			break
 		await process_frame
 	await _frames(3)
@@ -194,7 +201,7 @@ func _idle() -> void:
 func _reach() -> void:
 	await _idle()
 	for i: int in 900:
-		if not _main.has_move_preview() or _main.is_reach_ready():
+		if not _main.move.has_move_preview() or _main.move.is_reach_ready():
 			return
 		await process_frame
 

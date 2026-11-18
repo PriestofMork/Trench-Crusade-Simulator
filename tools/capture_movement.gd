@@ -116,11 +116,11 @@ func _run() -> void:
 	var model_8: Vector3 = _main.state.get_model(8).position + Vector3(0, 1, 0)
 	_click(_camera.unproject_position(model_8))
 	print("after clicking model 8: selected %d" % _main.selected_model_id())
-	while not _main.is_reach_ready():
+	while not _main.move.is_reach_ready():
 		await process_frame
 	_click(_camera.unproject_position(Vector3(33.5, 3.5, 38.5)))
-	print("after clicking the deck: sliding %s" % _main.is_sliding())
-	while _main.is_sliding():
+	print("after clicking the deck: sliding %s" % _main.is_busy())
+	while _main.is_busy():
 		await process_frame
 	print("model 8 now at %s, movement %.1f\"" % [_main.state.get_model(8).position, _main.state.get_model(8).movement])
 	quit()
@@ -130,7 +130,7 @@ func _select(id: int) -> void:
 	_main.set_hover_override(null)
 	_main.select_model(id)
 	for i: int in 600:
-		if _main.is_reach_ready():
+		if _main.move.is_reach_ready():
 			return
 		await process_frame
 	print("model %d got no movement indicator (not its turn)" % id)
@@ -140,20 +140,20 @@ func _select(id: int) -> void:
 func _move_and_film(target: Vector3, file_name: String, focus: Vector3, yaw: float, pitch: float, distance: float) -> void:
 	_main.set_hover_override(null)
 	var id: int = _main.selected_model_id()
-	var destination: Variant = _main.destination_for(target)
+	var destination: Variant = _main.move.destination_for(target)
 	var error: String = "no destination near %s" % target
 	if destination != null:
-		error = _main.move_selected_to(destination)
+		error = _main.move.move_selected_to(destination)
 	print("%s: move model %d to %s: '%s'" % [file_name, id, target, error])
 	_look(focus, yaw, pitch, distance)
 	var frame: int = 0
-	while _main.is_sliding():
+	while _main.is_busy():
 		await _frames(9)
-		if _main.is_sliding():
+		if _main.is_busy():
 			await _shot("%s_%d" % [file_name, frame])
 			frame += 1
 	print("  model %d now at %s, movement %.1f\"" % [id, _main.state.get_model(id).position, _main.state.get_model(id).movement])
-	while not _main.is_reach_ready():
+	while not _main.move.is_reach_ready():
 		await process_frame
 	await _shot("%s_after" % file_name)
 

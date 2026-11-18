@@ -52,9 +52,13 @@ func _run() -> void:
 	var view: ModelView = _main.get_node("Models/Model1")
 	_check(view.transform.basis.y.angle_to(Vector3.UP) > deg_to_rad(10), "model 1 tilts on the ramp (%.1f deg)" % rad_to_deg(view.transform.basis.y.angle_to(Vector3.UP)))
 	await _reach()
+	# Click from above: from the low view the platform's top is seen edge on.
+	_look(Vector3(8, 1, 14), 0.0, deg_to_rad(50), 14.0)
+	await _frames(2)
 	_click_world(Vector3(12.3, 2.0, 14))
 	await _idle()
 	await _frames(20)
+	_look(Vector3(8, 1, 14), 0.0, deg_to_rad(12), 8.0)
 	await _shot("31_level_again_on_the_platform")
 	_check(view.transform.basis.y.angle_to(Vector3.UP) < deg_to_rad(0.5), "model 1 level on the platform")
 	_finish(1)
@@ -225,7 +229,7 @@ func _idle() -> void:
 func _reach() -> void:
 	await _idle()
 	for i: int in 900:
-		if not _main.has_move_preview() or _main.is_reach_ready():
+		if not _main.move.has_move_preview() or _main.move.is_reach_ready():
 			return
 		await process_frame
 
