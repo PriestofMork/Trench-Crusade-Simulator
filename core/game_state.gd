@@ -49,6 +49,9 @@ var _height_field: HeightField = null
 ## The terrain as line of sight sees it, built when first asked for; dropped
 ## with the height field.
 var _sight_terrain: SightTerrain = null
+## Charge routes already worked out for the current state (derived data; it
+## drops them itself when the state changes). See ChargePlanner.
+var _charge_routes: ChargeRouteCache = ChargeRouteCache.new()
 
 
 func _init(
@@ -166,6 +169,11 @@ func height_field() -> HeightField:
 	if _height_field == null:
 		_height_field = HeightField.new(self)
 	return _height_field
+
+
+## The charge routes worked out for the current state (ChargeRouteCache).
+func charge_routes() -> ChargeRouteCache:
+	return _charge_routes
 
 
 ## The terrain as solids for line of sight. Built from `terrain` on first use

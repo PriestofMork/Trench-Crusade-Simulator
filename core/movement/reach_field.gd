@@ -42,6 +42,17 @@ extends RefCounted
 ## at the cheapest cost there (ruling 8: the safe route if there is one, even
 ## if it is longer; else the fewest rolls, then the cheapest). rolls_to()
 ## lists the rolls on the offered route in order.
+##
+## Goal-directed fields (brief 008c, "Compute on demand"): given a ReachGoal,
+## the same search runs as A* towards it over the whole table, with no
+## movement limit. States are then built only when the search first touches
+## their node, every heap key is the cost so far plus the goal's estimate,
+## and each tier stops once nothing left in its heap could beat the best goal
+## point found. With rolls allowed the tiers are searched in rounds of a
+## rising bound, so a tier never runs past what a higher tier already
+## reached. Everything else (steps, crossings, legality, queries) is the
+## field described above: a goal only changes the order states are taken in
+## and where the search stops.
 
 ## Which route a query offers to a destination (brief 008b, ruling 2):
 ## SAFEST is a move's (ruling 8 of brief 006: the roll-free route if there is
@@ -68,6 +79,11 @@ const SNAP_ITERATIONS: int = 11
 const MAX_ROLLS: int = 3
 ## A state's tier when it cannot be reached at all.
 const UNREACHED: int = -1
+## Goal-directed fields: how much past the best goal point found the search
+## still looks (ties and rounding), and how far each round of the tiers
+## raises the bound (inches of estimated route).
+const GOAL_SLACK: float = 0.01
+const GOAL_ROUND: float = 1.0
 
 ## Neighbour steps: 4 straight, 4 diagonal and 8 knight's moves.
 const _STEPS: Array[Vector2i] = [
@@ -129,8 +145,27 @@ var _limit: float = 0.0
 var _step_lengths: PackedFloat64Array = PackedFloat64Array()
 
 # States: (node, surface) pairs where the base may pass. The states at node n
-# are _node_first[n] .. _node_first[n + 1] - 1.
+# are _node_first[n] .. _node_end[n] - 1; _node_first[n] is NONE until the
+# node's states are built (all at once, or when first touched; see
+# _ensure_node()).
 var _node_first: PackedInt32Array = PackedInt32Array()
+var _node_end: PackedInt32Array = PackedInt32Array()
+## Goal-directed fields: the goal, the estimate per state, the cheapest goal
+## point found (INF if none yet), the goal points by the nodes near them, and
+## per tier how many of its seeds have been joined.
+var goal: ReachGoal = null
+var _state_h: PackedFloat64Array = PackedFloat64Array()
+var _goal_best: float = INF
+## Per goal point, the cheapest way to it the search has seen so far (an
+## upper bound on what the field offers there; INF if none).
+var goal_costs: PackedFloat64Array = PackedFloat64Array()
+var _goal_near: Dictionary[int, PackedInt32Array] = {}
+var _seeds_joined: PackedInt32Array = PackedInt32Array()
+## How many states the search has taken from its heaps (for reports).
+var expanded: int = 0
+## How many reach fields have been built, in all (diagnostics and tests:
+## what must not search can be checked to build none).
+static var built: int = 0
 var _state_node: PackedInt32Array = PackedInt32Array()
 var _state_surface: PackedInt32Array = PackedInt32Array()
 var _state_pos: PackedVector3Array = PackedVector3Array()
@@ -174,8 +209,11 @@ var _anchor_tier: PackedInt32Array = PackedInt32Array()
 ## joining queries to them.
 var _anchors_near_node: Dictionary[int, PackedInt32Array] = {}
 ## Per node, the surfaces whose footprint is close enough to climb onto from there.
-var _wall_surfaces_near: Array[PackedInt32Array] = []
-## Per node, 1 if a state on another surface is within a step of it.
+var _wall_surfaces_near: Dictionary[int, PackedInt32Array] = {}
+var _wall_rects: Array[Vector4i] = []
+var _wall_rect_surfaces: PackedInt32Array = PackedInt32Array()
+## Per node, whether a state on another surface is within a step of it: 0 not
+## known yet, 1 no, 2 yes (see _near_other()).
 var _near_other_surface: PackedByteArray = PackedByteArray()
 
 # Last point query, so hovering and then clicking does the work once.
@@ -184,10 +222,6 @@ var _query_anchor: int = NONE
 var _query_surface: int = NONE
 var _query_tier: int = UNREACHED
 var _query_cost: float = INF
-## Whether a crossing was left out because it would end past the search
-## limit: roll-free from the safe search, and of any kind.
-var _cut_safe: bool = false
-var _cut_any: bool = false
 var _query_target: Vector3
 var _query_path: Array[Vector3] = []
 var _query_path_ready: bool = false
@@ -211,22 +245,29 @@ var _heap_state: PackedInt32Array = PackedInt32Array()
 ## `p_zones` and `p_allow_rolls` change the enemy rule and forbid rolls, for a
 ## charge or a retreat (brief 007); a path from such a field is legal under
 ## the same settings.
+## `p_goal` makes it a goal-directed field (see the class notes): the budget
+## is then ignored (the whole table, no limit) and the search stops when it
+## has found the cheapest way to the goal.
 func _init(
 	state: GameState, p_model_id: int, p_budget: float = -1.0, p_cell_size: float = CELL_SIZE,
 	p_descent_mode: Transitions.DescentMode = Transitions.DescentMode.DROP, p_zones: EnemyZones = null,
-	p_allow_rolls: bool = true
+	p_allow_rolls: bool = true, p_goal: ReachGoal = null
 ) -> void:
 	descent_mode = p_descent_mode
 	zones = p_zones
 	allow_rolls = p_allow_rolls
 	model_id = p_model_id
 	cell_size = p_cell_size
+	goal = p_goal
+	built += 1
 	var model: ModelState = state.get_model(model_id)
 	if model == null:
 		push_error("ReachField: no model with id %d" % model_id)
 		return
 	start = model.position
 	budget = p_budget if p_budget >= 0.0 else model.movement
+	if goal != null:
+		budget = INF
 	_start_2d = Vector2(start.x, start.z)
 	legality = MoveLegality.new(state, model, null, zones)
 	legality.descent_mode = descent_mode
@@ -242,7 +283,10 @@ func _init(
 	_build_wall_lists()
 	_build_jump_targets()
 	var t1: int = Time.get_ticks_usec()
-	_search()
+	if goal != null:
+		_search_toward()
+	else:
+		_search()
 	timings["setup_ms"] = (t1 - t0) / 1000.0
 	timings["search_ms"] = (Time.get_ticks_usec() - t1) / 1000.0
 
@@ -267,49 +311,10 @@ func estimate_cost(point: Vector3) -> float:
 	return _query_cost + field.stop_surcharge(_query_surface, legality.start_piece_ids)
 
 
-## estimate_cost() for the roll-free route and the cheapest route of any kind
-## at once (the two charge route choices): Vector2(SAFE_ONLY, SHORTEST), INF
-## where there is none. Leaves the query cache alone.
-func estimate_costs(point: Vector3) -> Vector2:
-	var result: Vector2 = Vector2(INF, INF)
-	if _cost.is_empty() or _start_states.is_empty():
-		return result
-	var target: Vector2 = Vector2(point.x, point.z)
-	var stoppable: PackedInt32Array = PackedInt32Array()
-	var surcharges: PackedFloat64Array = PackedFloat64Array()
-	for surface: int in _surfaces_for(point):
-		if legality.point_result(target, surface) == MoveLegality.Result.OK:
-			stoppable.append(surface)
-			surcharges.append(field.stop_surcharge(surface, legality.start_piece_ids))
-	if stoppable.is_empty():
-		return result
-	var current: int = _tier
-	for tier: int in MAX_ROLLS + 1:
-		if not _use_tier(tier):
-			continue
-		for i: int in stoppable.size():
-			var found: Vector2 = _best_source(target, stoppable[i], minf(budget - surcharges[i] + EPSILON, result.y - surcharges[i] - EPSILON))
-			if found.y != NONE and found.x + surcharges[i] < result.y:
-				result.y = found.x + surcharges[i]
-				if tier == 0:
-					result.x = result.y
-	_use_tier(current)
-	return result
-
-
-## Whether a field with a larger budget could reach anywhere this one does
-## not, with `choice`'s routes: false if the search ran out of places to go
-## before the budget (an enclosed area, such as a platform it cannot get down
-## from without a roll), so nothing further is reachable at all.
-func reaches_beyond(choice: RouteChoice) -> bool:
-	var safe: bool = choice == RouteChoice.SAFE_ONLY
-	if _cut_any if not safe else _cut_safe:
-		return true
-	var costs: PackedFloat64Array = _safe_cost if safe else _any_cost
-	for k: int in costs.size():
-		if costs[k] > budget + EPSILON and costs[k] < INF:
-			return true
-	return false
+## Goal-directed fields: whether the search got to a goal point (false if it
+## ran out of places to go first, having then searched everywhere it can).
+func goal_reached() -> bool:
+	return _goal_best < INF
 
 
 ## Radius of the model's base, inches.
@@ -478,7 +483,9 @@ func _can_stand(index: int) -> bool:
 ## The states at a node, one per floor the base may pass through there.
 func states_at_node(node: int) -> PackedInt32Array:
 	var result: PackedInt32Array = PackedInt32Array()
-	for k: int in range(_node_first[node], _node_first[node + 1]):
+	if _node_first[node] == NONE:
+		return result
+	for k: int in range(_node_first[node], _node_end[node]):
 		result.append(k)
 	return result
 
@@ -589,31 +596,78 @@ func _build_states() -> void:
 	for s: int in field.surface_count():
 		_surface_surcharge.append(field.stop_surcharge(s, legality.start_piece_ids))
 	var count: int = node_count()
-	_node_first.resize(count + 1)
+	_node_first.resize(count)
+	_node_first.fill(NONE)
+	_node_end.resize(count)
+	_node_end.fill(NONE)
+	_near_other_surface.resize(count)
+	_new_tier_arrays()
+	if goal != null:
+		# Built when the search first touches them; the start first.
+		_ensure_node(_start_node)
+		return
 	for node: int in count:
-		_node_first[node] = _state_node.size()
-		var p: Vector2 = node_position_2d(node)
-		if node == _start_node:
-			p = _start_2d
-		# Every way there costs at least the distance on the table plane.
-		if p.distance_to(_start_2d) > _limit:
-			continue
+		_ensure_node(node)
+
+
+## Builds the states at `node` if they are not built yet: one per floor the
+## base may pass through there. Every per-state array grows with them (the
+## current tier's too; the others catch up in _use_tier()).
+func _ensure_node(node: int) -> void:
+	if _node_first[node] != NONE:
+		return
+	_node_first[node] = _state_node.size()
+	var p: Vector2 = node_position_2d(node)
+	if node == _start_node:
+		p = _start_2d
+	# Every way there costs at least the distance on the table plane.
+	if p.distance_to(_start_2d) <= _limit:
 		for surface: int in field.surfaces_at(p):
-			if legality.passing_result(p, surface) != MoveLegality.Result.OK:
+			if not legality.passes(p, surface):
 				continue
 			var k: int = _state_node.size()
 			_state_node.append(node)
 			_state_surface.append(surface)
-			var pos: Vector3 = legality.on_surface(p, surface)
-			_state_pos.append(pos)
+			_state_pos.append(legality.on_surface(p, surface))
 			_state_pos_2d.append(p)
 			_clearance.append(legality.clearance(p, surface, CLEARANCE_CAP))
+			_state_h.append(goal.estimate(p) if goal != null else 0.0)
 			if node == _start_node and legality.start_surfaces.has(surface):
 				_start_states.append(k)
-	_node_first[count] = _state_node.size()
-	_stand_ok.resize(_state_node.size())
-	_new_tier_arrays()
-	_mark_surface_boundaries()
+	_node_end[node] = _state_node.size()
+	_grow_state_arrays()
+
+
+## Grows the per-state arrays of the current tier (and those of every tier)
+## to the number of states, new entries unreached.
+## (Packed arrays are values in GDScript, so each is grown in place here.)
+func _grow_state_arrays() -> void:
+	var states: int = _state_node.size()
+	if _stand_ok.size() < states:
+		_stand_ok.resize(states)
+	var old: int = _safe_cost.size()
+	if old < states:
+		_safe_cost.resize(states)
+		_any_cost.resize(states)
+		for i: int in range(old, states):
+			_safe_cost[i] = INF
+			_any_cost[i] = INF
+	old = _cost.size()
+	if old >= states:
+		return
+	_cost.resize(states)
+	_parent.resize(states)
+	_parent_checked.resize(states)
+	_checked_cost.resize(states)
+	_checked_parent.resize(states)
+	_done.resize(states)
+	_state_anchor.resize(states)
+	for i: int in range(old, states):
+		_cost[i] = INF
+		_parent[i] = NONE
+		_checked_cost[i] = INF
+		_checked_parent[i] = NONE
+		_state_anchor[i] = NONE
 
 
 ## Fresh search arrays for the tier about to be searched (new arrays, so a
@@ -639,12 +693,15 @@ func _new_tier_arrays() -> void:
 	_state_anchor = PackedInt32Array()
 	_state_anchor.resize(states)
 	_state_anchor.fill(NONE)
+	_heap_cost = PackedFloat64Array()
+	_heap_state = PackedInt32Array()
 
 
 func _tier_arrays() -> Dictionary:
 	return {
 		"cost": _cost, "parent": _parent, "parent_checked": _parent_checked, "checked_cost": _checked_cost,
 		"checked_parent": _checked_parent, "done": _done, "state_anchor": _state_anchor,
+		"heap_cost": _heap_cost, "heap_state": _heap_state,
 	}
 
 
@@ -666,56 +723,75 @@ func _use_tier(tier: int) -> bool:
 	_checked_parent = arrays["checked_parent"]
 	_done = arrays["done"]
 	_state_anchor = arrays["state_anchor"]
+	_heap_cost = arrays["heap_cost"]
+	_heap_state = arrays["heap_state"]
+	# States built while another tier was searched.
+	_grow_state_arrays()
 	return true
 
 
-## Marks nodes where the search may change surface: another surface within a step.
-func _mark_surface_boundaries() -> void:
-	var count: int = node_count()
-	var signature: PackedInt32Array = PackedInt32Array()
-	signature.resize(count)
-	for node: int in count:
-		var first: int = _node_first[node]
-		var last: int = _node_first[node + 1]
-		if first == last:
-			signature[node] = NONE
-		elif last - first == 1:
-			signature[node] = _state_surface[first]
-		else:
-			signature[node] = -2
-	_near_other_surface.resize(count)
-	for node: int in count:
-		var own: int = signature[node]
-		if own == NONE:
-			continue
-		if own == -2:
-			_near_other_surface[node] = 1
-			continue
-		var ix: int = node % size_x
-		var iz: int = node / size_x
-		for step: Vector2i in _STEPS:
-			var nx: int = ix + step.x
-			var nz: int = iz + step.y
-			if nx < 0 or nz < 0 or nx >= size_x or nz >= size_z:
-				continue
-			var other: int = signature[nz * size_x + nx]
-			if other != NONE and other != own:
-				_near_other_surface[node] = 1
-				break
+## Whether the search may change surface at `node`: a state on another
+## surface within a step (worked out when first asked).
+func _near_other(node: int) -> bool:
+	if _near_other_surface[node] == 0:
+		_near_other_surface[node] = 2 if _has_other_surface_near(node) else 1
+	return _near_other_surface[node] == 2
 
 
-## For climbing: which surfaces' footprints come within reach of each node.
+func _has_other_surface_near(node: int) -> bool:
+	var first: int = _node_first[node]
+	var last: int = _node_end[node]
+	if last - first > 1:
+		return true
+	if last == first:
+		return false
+	var own: int = _state_surface[first]
+	var ix: int = node % size_x
+	var iz: int = node / size_x
+	for step: Vector2i in _STEPS:
+		var nx: int = ix + step.x
+		var nz: int = iz + step.y
+		if nx < 0 or nz < 0 or nx >= size_x or nz >= size_z:
+			continue
+		var other_node: int = nz * size_x + nx
+		_ensure_node(other_node)
+		for k: int in range(_node_first[other_node], _node_end[other_node]):
+			if _state_surface[k] != own:
+				return true
+	return false
+
+
+## For climbing: which surfaces' footprints come within reach of a node. Each
+## surface's footprint, grown by the reach, as a rectangle of nodes; the list
+## for a node is made when first asked (_walls_near()).
 func _build_wall_lists() -> void:
-	_wall_surfaces_near.resize(node_count())
 	var reach: float = _radius + _wall_reach()
 	for s: HeightField.Surface in field.surfaces:
 		if s.is_table():
 			continue
 		var low: Vector2 = (s.bounds_min - Vector2(reach, reach) - origin) / cell_size
 		var high: Vector2 = (s.bounds_max + Vector2(reach, reach) - origin) / cell_size
-		for iz: int in range(maxi(floori(low.y), 0), mini(ceili(high.y), size_z - 1) + 1):
-			for ix: int in range(maxi(floori(low.x), 0), mini(ceili(high.x), size_x - 1) + 1):
-				_wall_surfaces_near[node_index(ix, iz)].append(s.index)
+		var rect: Vector4i = Vector4i(
+			maxi(floori(low.x), 0), maxi(floori(low.y), 0), mini(ceili(high.x), size_x - 1), mini(ceili(high.y), size_z - 1)
+		)
+		if rect.x <= rect.z and rect.y <= rect.w:
+			_wall_rects.append(rect)
+			_wall_rect_surfaces.append(s.index)
+
+
+## The surfaces whose footprints come within reach of `node` (see _build_wall_lists()).
+func _walls_near(node: int) -> PackedInt32Array:
+	if _wall_surfaces_near.has(node):
+		return _wall_surfaces_near[node]
+	var ix: int = node % size_x
+	var iz: int = node / size_x
+	var result: PackedInt32Array = PackedInt32Array()
+	for i: int in _wall_rects.size():
+		var rect: Vector4i = _wall_rects[i]
+		if ix >= rect.x and iz >= rect.y and ix <= rect.z and iz <= rect.w:
+			result.append(_wall_rect_surfaces[i])
+	_wall_surfaces_near[node] = result
+	return result
 
 
 ## For jumping: per surface, the others whose footprints come within the jump
@@ -764,6 +840,8 @@ func _search() -> void:
 				_join_anchor(anchor)
 		var tier_started: int = Time.get_ticks_usec()
 		_run_search()
+		_heap_cost.clear()
+		_heap_state.clear()
 		timings["tier_%d_ms" % tier] = (Time.get_ticks_usec() - tier_started) / 1000.0
 		_tiers[tier] = _tier_arrays()
 		if tier == 0:
@@ -776,27 +854,129 @@ func _search() -> void:
 	_use_tier(0)
 
 
-func _run_search() -> void:
+## The goal-directed search (see the class notes): A* towards the goal, tier
+## by tier. Roll-free only: one pass with no bound. With rolls: rounds of a
+## rising bound on cost plus estimate, each tier resumed from its own heap
+## up to the bound (its new seeds joined first), until the best goal point
+## found is within the bound or every heap is empty.
+func _search_toward() -> void:
+	_seed_anchors.resize(MAX_ROLLS + 1)
+	_seeds_joined.resize(MAX_ROLLS + 1)
+	_tiers.resize(MAX_ROLLS + 1)
+	_tiers.fill(null)
+	_index_goal_points()
+	_tier = 0
+	for k: int in _start_states:
+		var anchor: int = _add_anchor(_state_pos[k], _state_surface[k], 0.0, NONE, PackedVector3Array(), _clearance[k])
+		_state_anchor[k] = anchor
+		_cost[k] = 0.0
+		_parent[k] = anchor
+		_parent_checked[k] = 1
+		_heap_push(_state_h[k], k)
+	_tiers[0] = _tier_arrays()
+	var tier_count: int = MAX_ROLLS + 1 if allow_rolls else 1
+	var bound: float = INF
+	if tier_count > 1:
+		bound = goal.estimate(_start_2d) + GOAL_ROUND
+	var started: int = Time.get_ticks_usec()
+	while true:
+		var open: bool = false
+		for tier: int in tier_count:
+			if _tiers[tier] == null:
+				if _seed_anchors[tier].size() == _seeds_joined[tier]:
+					continue
+				_tiers[_tier] = _tier_arrays()
+				_tier = tier
+				_new_tier_arrays()
+				_tiers[tier] = _tier_arrays()
+			_use_tier(tier)
+			for i: int in range(_seeds_joined[tier], _seed_anchors[tier].size()):
+				_join_anchor(_seed_anchors[tier][i])
+			_seeds_joined[tier] = _seed_anchors[tier].size()
+			_run_search(bound)
+			_tiers[tier] = _tier_arrays()
+			open = open or not _heap_cost.is_empty()
+		if _goal_best <= bound or not open:
+			break
+		bound += GOAL_ROUND
+	timings["goal_ms"] = (Time.get_ticks_usec() - started) / 1000.0
+	_use_tier(0)
+
+
+## Goal points by the nodes within two cells of them (as _best_source() looks).
+func _index_goal_points() -> void:
+	goal_costs.resize(goal.points.size())
+	goal_costs.fill(INF)
+	for i: int in goal.points.size():
+		var p: Vector3 = goal.points[i]
+		var local: Vector2 = (Vector2(p.x, p.z) - origin) / cell_size
+		for dz: int in range(-2, 3):
+			for dx: int in range(-2, 3):
+				var nx: int = roundi(local.x) + dx
+				var nz: int = roundi(local.y) + dz
+				if nx < 0 or nz < 0 or nx >= size_x or nz >= size_z:
+					continue
+				var node: int = nz * size_x + nx
+				if not _goal_near.has(node):
+					_goal_near[node] = PackedInt32Array()
+				_goal_near[node].append(i)
+
+
+## A goal-directed field: a state just taken has `cost`; the goal points it
+## can walk straight to give an upper bound on the best goal cost.
+func _check_goal(state: int) -> void:
+	var node: int = _state_node[state]
+	if not _goal_near.has(node):
+		return
+	var surface: int = _state_surface[state]
+	var here: Vector2 = _state_pos_2d[state]
+	for i: int in _goal_near[node]:
+		if goal.surfaces[i] != surface:
+			continue
+		var p: Vector3 = goal.points[i]
+		var there: Vector2 = Vector2(p.x, p.z)
+		var cost: float = _cost[state] + legality.walk_length(here, there, surface) + _surface_surcharge[surface]
+		if cost >= goal_costs[i]:
+			continue
+		if here.distance_to(there) > EPSILON and not legality.walk_ok(here, there, surface):
+			continue
+		goal_costs[i] = cost
+		_goal_best = minf(_goal_best, cost)
+
+
+## Takes states from the current tier's heap, cheapest first, until it is
+## empty or (goal-directed) the next would cost more than `stop_at` with the
+## goal's estimate added.
+func _run_search(stop_at: float = INF) -> void:
 	while not _heap_cost.is_empty():
-		var cost: float = _heap_cost[0]
+		var key: float = _heap_cost[0]
+		if key > stop_at or key > _goal_best + GOAL_SLACK:
+			break
 		var state: int = _heap_pop()
-		if _done[state] == 1 or cost > _cost[state]:
+		if _done[state] == 1 or key > _cost[state] + _state_h[state]:
 			continue
 		if not _confirm_parent(state):
 			_done[state] = 1
 			continue
 		_done[state] = 1
+		expanded += 1
 		if _cost[state] > _limit:
 			break
+		if goal != null:
+			# A* takes states in order of cost plus estimate, so the costs
+			# over the tiers are kept as states are taken.
+			if _tier == 0:
+				_safe_cost[state] = _cost[state]
+			_check_goal(state)
 		# A lower tier got here as cheaply, with fewer rolls: whatever follows
 		# from here is no better in this tier.
 		if _tier > 0 and _any_cost[state] <= _cost[state] + EPSILON:
 			continue
+		if goal != null and _cost[state] < _any_cost[state]:
+			_any_cost[state] = _cost[state]
 		_expand_walks(state)
 		_expand_switches(state)
 		_expand_walls(state)
-	_heap_cost.clear()
-	_heap_state.clear()
 
 
 ## Walks to neighbouring nodes on the same surface.
@@ -819,8 +999,9 @@ func _expand_walks(state: int) -> void:
 		if nx < 0 or nz < 0 or nx >= size_x or nz >= size_z:
 			continue
 		var next_node: int = nz * size_x + nx
+		_ensure_node(next_node)
 		var next: int = _node_first[next_node]
-		var next_end: int = _node_first[next_node + 1]
+		var next_end: int = _node_end[next_node]
 		while next < next_end and _state_surface[next] != surface:
 			next += 1
 		if next == next_end or _done[next] == 1:
@@ -833,7 +1014,7 @@ func _expand_walks(state: int) -> void:
 		# The grid step itself must be legal, so the fallback always has one.
 		if (
 			minf(here_clearance, _clearance[next]) < _step_lengths[s] * 0.5
-			and legality.walk_result(here, _state_pos_2d[next], surface) != MoveLegality.Result.OK
+			and not legality.walk_ok(here, _state_pos_2d[next], surface)
 		):
 			continue
 		if step_cost < _checked_cost[next]:
@@ -843,19 +1024,19 @@ func _expand_walks(state: int) -> void:
 			_cost[next] = lazy_cost
 			_parent[next] = via
 			_parent_checked[next] = 1 if via == own else 0
-			_heap_push(lazy_cost, next)
+			_heap_push(lazy_cost + _state_h[next], next)
 		elif step_cost < _cost[next]:
 			_cost[next] = step_cost
 			_parent[next] = own
 			_parent_checked[next] = 1
-			_heap_push(step_cost, next)
+			_heap_push(step_cost + _state_h[next], next)
 
 
 ## Changes to another surface at the same height, on the way to a neighbouring
 ## node (or at this node).
 func _expand_switches(state: int) -> void:
 	var node: int = _state_node[state]
-	if _near_other_surface[node] == 0:
+	if not _near_other(node):
 		return
 	var ix: int = node % size_x
 	var iz: int = node / size_x
@@ -870,7 +1051,8 @@ func _expand_switches(state: int) -> void:
 		if nx < 0 or nz < 0 or nx >= size_x or nz >= size_z:
 			continue
 		var next_node: int = nz * size_x + nx
-		for next: int in range(_node_first[next_node], _node_first[next_node + 1]):
+		_ensure_node(next_node)
+		for next: int in range(_node_first[next_node], _node_end[next_node]):
 			var other: int = _state_surface[next]
 			if other == surface or _done[next] == 1:
 				continue
@@ -890,9 +1072,9 @@ func _expand_switches(state: int) -> void:
 			var cost: float = _cost[state] + to_meet + legality.walk_length(q, there, other)
 			if cost >= _cost[next] and cost >= _checked_cost[next]:
 				continue
-			if legality.walk_result(here, q, surface) != MoveLegality.Result.OK:
+			if not legality.walk_ok(here, q, surface):
 				continue
-			if legality.walk_result(q, there, other) != MoveLegality.Result.OK:
+			if not legality.walk_ok(q, there, other):
 				continue
 			var anchor: int = _add_anchor(
 				legality.on_surface(q, other), other, _cost[state] + to_meet, _anchor_of(state),
@@ -930,7 +1112,7 @@ func _expand_walls(state: int) -> void:
 	var node: int = _state_node[state]
 	var reach: float = _wall_reach()
 	# Up: walk straight to the closest point of the wall until the base touches it.
-	for high: int in _wall_surfaces_near[node]:
+	for high: int in _walls_near(node):
 		if high == surface:
 			continue
 		var polygon: PackedVector2Array = field.surfaces[high].polygon
@@ -1015,7 +1197,7 @@ func _try_wall(state: int, from: Vector2, from_surface: int, to: Vector2, to_sur
 		return
 	var walk: float = 0.0
 	if here.distance_to(from) > EPSILON:
-		if legality.walk_result(here, from, from_surface) != MoveLegality.Result.OK:
+		if not legality.walk_ok(here, from, from_surface):
 			return
 		walk = legality.walk_length(here, from, from_surface)
 	var crossing: float = (
@@ -1029,9 +1211,6 @@ func _try_wall(state: int, from: Vector2, from_surface: int, to: Vector2, to_sur
 		return
 	var arrival_cost: float = _cost[state] + walk + crossing
 	if arrival_cost > _limit:
-		_cut_any = true
-		if tier == 0:
-			_cut_safe = true
 		return
 	if tier > _tier and _arrival_near_is_as_cheap(to, to_surface, arrival_cost, _tier + 1, tier):
 		return
@@ -1068,6 +1247,7 @@ func _join_anchor(anchor: int) -> void:
 			var nz: int = roundi(local.y) + dz
 			if nx < 0 or nz < 0 or nx >= size_x or nz >= size_z:
 				continue
+			_ensure_node(nz * size_x + nx)
 			var next: int = _state_at(nz * size_x + nx, to_surface)
 			if next == NONE or _done[next] == 1:
 				continue
@@ -1077,7 +1257,7 @@ func _join_anchor(anchor: int) -> void:
 			var cost: float = arrival_cost + legality.walk_length(to, there, to_surface)
 			if cost >= _cost[next] and cost >= _checked_cost[next]:
 				continue
-			if legality.walk_result(to, there, to_surface) != MoveLegality.Result.OK:
+			if not legality.walk_ok(to, there, to_surface):
 				continue
 			_offer_checked(next, cost, anchor)
 
@@ -1122,7 +1302,7 @@ func _offer_checked(state: int, cost: float, anchor: int) -> void:
 		_cost[state] = cost
 		_parent[state] = anchor
 		_parent_checked[state] = 1
-		_heap_push(cost, state)
+		_heap_push(cost + _state_h[state], state)
 
 
 ## Checks the straight line from a state's parent. If it is not legal, falls
@@ -1140,7 +1320,7 @@ func _confirm_parent(state: int) -> bool:
 		_anchor_surface[parent] == surface
 		and (
 			minf(_anchor_clearance[parent], _clearance[state]) >= length * 0.5
-			or legality.walk_result(from, here, surface) == MoveLegality.Result.OK
+			or legality.walk_ok(from, here, surface)
 		)
 	):
 		_parent_checked[state] = 1
@@ -1151,8 +1331,12 @@ func _confirm_parent(state: int) -> bool:
 	return _parent[state] != NONE
 
 
+## The state at `node` on `surface`, or NONE (also if the node is not built:
+## nothing has reached it).
 func _state_at(node: int, surface: int) -> int:
-	for k: int in range(_node_first[node], _node_first[node + 1]):
+	if _node_first[node] == NONE:
+		return NONE
+	for k: int in range(_node_first[node], _node_end[node]):
 		if _state_surface[k] == surface:
 			return k
 	return NONE
@@ -1285,7 +1469,7 @@ func _best_source(target: Vector2, surface: int, limit: float) -> Vector2:
 			from = _state_pos_2d[-2 - source]
 		else:
 			from = Vector2(_anchor_pos[source].x, _anchor_pos[source].z)
-		if from.distance_to(target) > EPSILON and legality.walk_result(from, target, surface) != MoveLegality.Result.OK:
+		if from.distance_to(target) > EPSILON and not legality.walk_ok(from, target, surface):
 			continue
 		if source <= -2:
 			source = _anchor_of(-2 - source)

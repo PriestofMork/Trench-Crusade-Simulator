@@ -97,6 +97,10 @@ var _friend_centres: PackedVector2Array = PackedVector2Array()
 var _friend_bottoms: PackedFloat64Array = PackedFloat64Array()
 var _friend_tops: PackedFloat64Array = PackedFloat64Array()
 var _friend_radii: PackedFloat64Array = PackedFloat64Array()
+## The enemies bucketed by position (see _build_enemy_grid()).
+var _enemy_reach: float = 0.0
+var _enemy_grid: Dictionary[Vector2i, PackedInt32Array] = {}
+var _all_enemies: PackedInt32Array = PackedInt32Array()
 
 
 ## `zones` (null for the normal rule) says how enemy 1" zones are treated.
@@ -133,6 +137,45 @@ func _init(state: GameState, model: ModelState, p_field: HeightField = null, zon
 			_friend_bottoms.append(other.position.y)
 			_friend_tops.append(other.position.y + other.height_inches())
 			_friend_radii.append(other.base_radius_inches())
+	_build_enemy_grid()
+
+
+## Buckets the enemies by where they stand, in cells as wide as the furthest
+## any enemy can hold the mover back (its limit, see _enemy_limit()), so a
+## check near a point only looks at the enemies in the cells around it.
+func _build_enemy_grid() -> void:
+	_enemy_reach = 0.0
+	for i: int in _enemy_centres.size():
+		var zone: float = maxf(maxf(_enemy_pass[i], _enemy_stop[i]), 0.0)
+		_enemy_reach = maxf(_enemy_reach, radius + _enemy_radii[i] + zone + EPSILON)
+		_all_enemies.append(i)
+	if _enemy_reach <= 0.0:
+		return
+	for i: int in _enemy_centres.size():
+		var cell: Vector2i = Vector2i((_enemy_centres[i] / _enemy_reach).floor())
+		if not _enemy_grid.has(cell):
+			_enemy_grid[cell] = PackedInt32Array()
+		_enemy_grid[cell].append(i)
+
+
+## The enemies that may hold back a base anywhere within `margin` of the
+## segment from a to b (all of them if that spans many cells). An enemy not
+## listed is further than its limit plus `margin` from every point of it.
+func _enemies_near(a: Vector2, b: Vector2, margin: float = 0.0) -> PackedInt32Array:
+	if _enemy_reach <= 0.0 or margin == INF:
+		return _all_enemies
+	var grow: float = _enemy_reach + margin
+	var low: Vector2i = Vector2i(((a.min(b) - Vector2(grow, grow)) / _enemy_reach).floor())
+	var high: Vector2i = Vector2i(((a.max(b) + Vector2(grow, grow)) / _enemy_reach).floor())
+	if (high.x - low.x + 1) * (high.y - low.y + 1) > 36:
+		return _all_enemies
+	var result: PackedInt32Array = PackedInt32Array()
+	for cz: int in range(low.y, high.y + 1):
+		for cx: int in range(low.x, high.x + 1):
+			var cell: Vector2i = Vector2i(cx, cz)
+			if _enemy_grid.has(cell):
+				result.append_array(_enemy_grid[cell])
+	return result
 
 
 ## The surfaces a 3D point is on (lowest first).
@@ -175,7 +218,7 @@ func stop_result_if_passing(p: Vector2, surface: int) -> Result:
 		return Result.HEADROOM
 	var y: float = field.surface_height(surface, p)
 	if _stop_zones_wider:
-		for i: int in _enemy_centres.size():
+		for i: int in _enemies_near(p, p):
 			if _enemy_stop[i] <= _enemy_pass[i]:
 				continue
 			var stop_limit: float = _enemy_limit(i, y, y, _enemy_stop[i])
@@ -203,6 +246,19 @@ func walk_result(a: Vector2, b: Vector2, surface: int) -> Result:
 	if not field.walk_clear(a, b, surface, radius):
 		return Result.TERRAIN
 	return Result.ENEMY
+
+
+## walk_result() == OK, without working out why not (for searches).
+func walk_ok(a: Vector2, b: Vector2, surface: int) -> bool:
+	return field.walk_clear(a, b, surface, radius) and _enemies_clear(
+		a, b, field.surface_height(surface, a), field.surface_height(surface, b)
+	)
+
+
+## passing_result() == OK, without working out why not (for searches).
+func passes(p: Vector2, surface: int) -> bool:
+	var y: float = field.surface_height(surface, p)
+	return field.passable(p, surface, radius) and _enemies_clear(p, p, y, y)
 
 
 ## Cost of walking from a to b on `surface`: the length along the surface.
@@ -647,7 +703,7 @@ func clearance(p: Vector2, surface: int, cap: float = INF) -> float:
 		return -1.0
 	var best: float = field.clearance(p, surface, radius, cap)
 	var y: float = field.surface_height(surface, p)
-	for i: int in _enemy_centres.size():
+	for i: int in _enemies_near(p, p, cap):
 		var limit: float = _enemy_limit(i, y, y, _enemy_pass[i])
 		if limit > 0.0:
 			best = minf(best, p.distance_to(_enemy_centres[i]) - limit)
@@ -703,7 +759,7 @@ static func describe(result: Result) -> String:
 func _enemies_clear(a: Vector2, b: Vector2, ya: float, yb: float) -> bool:
 	var low: float = minf(ya, yb)
 	var high: float = maxf(ya, yb)
-	for i: int in _enemy_centres.size():
+	for i: int in _enemies_near(a, b):
 		var limit: float = _enemy_limit(i, low, high, _enemy_pass[i])
 		if limit <= 0.0:
 			continue
