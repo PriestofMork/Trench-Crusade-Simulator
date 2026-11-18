@@ -45,6 +45,20 @@ Two layers with a one-way dependency: `game/` knows `core/`, never the reverse.
 **`game/` (presentation)**
 - 3D table, camera, selection, movement preview, dice tray, prompts.
 - Reads core state, sends commands, plays back the events core emits.
+- Each interaction mode (select, move, charge, retreat, and later shoot and fight) is
+  its own controller script. `main.gd` only wires them together.
+
+**Compute on demand**
+- Compute only what the player is looking at right now, and only when they ask
+  for it. Never compute something for every model or every target "in case".
+- Cheap checks first (distance, a bounding test), the expensive search only for
+  the one thing selected. Searches are goal-directed and stop when they arrive.
+- Results are cached against the game state and thrown away when it changes.
+- Budgets on the test table: opening a mode under 20 ms; one selected item (a
+  route, a sight check) under 100 ms typical, 300 ms worst. The movement area of the
+  selected model is the one larger computation, built in the background.
+- Precision is chosen to be good enough for play, not exact: a 0.25" grid, a fixed
+  set of sight sample points. Anything finer needs a reason.
 
 ## Decisions so far
 

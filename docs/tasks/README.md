@@ -32,5 +32,8 @@ Open a new session in this folder and say:
 
 ## Planned next (not yet written)
 
+- 008d: split `game/main.gd` (1600 lines) into one controller per interaction mode,
+  no behaviour change, before attacks add more modes
+
 - 009: ranged and melee attacks, armour, Bloodbath, weapons as data
 - 010: import the TTS models and show them on their bases

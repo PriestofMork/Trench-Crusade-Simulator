@@ -11,15 +11,20 @@ looking at.
 The charge rules do not change. `docs/rules/movement.md` ("Charge") and the
 rulings of brief 008b stay as they are.
 
+Follow the principle "Compute on demand" in `docs/design.md`.
+
 ## Rulings for this brief
 
 1. **Declaring needs only two checks:** the enemy is visible and within 12" edge to
    edge. That is all charge mode computes when it opens, for every enemy. No route,
    no reach field.
-2. **A route is worked out for one target at a time:** when the player hovers it
-   (for the preview and label) and when the charge is declared. Results are cached
-   per charger, target, route choice and game state, so hovering back and forth
-   costs nothing.
+2. **A route is worked out for one target at a time, only when the player clicks
+   it.** Hovering does nothing beyond highlighting the model. The click selects the
+   target; core then works out its route once, and the game shows the route, what
+   the charge needs and any interposing model, with Confirm and Cancel. Toggling
+   "climbs and jumps" while a target is selected works out that route choice once.
+   Results are cached per charger, target, route choice and game state, so
+   selecting the same target again costs nothing.
 3. **The route is a search to that one target,** not a reach field over the whole
    area: the shortest path to base contact (or, by 008b ruling 6, to the closest
    stoppable position), with the route choice and Drop / Climb down mode. Use a
@@ -31,9 +36,9 @@ rulings of brief 008b stay as they are.
 5. **Interposing** is checked along that route as before; if another enemy replaces
    the target, the search is run again to it.
 6. **Labels:** in charge mode every enemy in range shows only whether it can be
-   declared ("can charge" / "not visible"). The hovered one also shows the result of
-   its route: "certain", "needs 4+", "needs 2+, 1 risky roll", "cannot reach", or the
-   interposing model.
+   declared ("can charge" / "not visible"). The selected one also shows the result
+   of its route: "certain", "needs 4+", "needs 2+, 1 risky roll", "cannot reach", or
+   the interposing model.
 7. **The pending move after the roll** uses the same route; nothing is searched
    again.
 
@@ -43,8 +48,8 @@ rulings of brief 008b stay as they are.
   route search (rulings 3 to 5), replacing the up-front per-charger planning.
   Whatever is no longer used (the long-range search, per-charger reach field for
   charges) is removed.
-- Game: labels per ruling 6; the route for the hovered target is computed on a
-  worker thread as now, with the label showing "…" until it is ready.
+- Game: labels per ruling 6; the route for the selected target is computed on a
+  worker thread, with the label showing "…" until it is ready.
 - Benchmark: add the declaration check and the single-target search to the
   benchmark tool.
 
@@ -65,7 +70,7 @@ Report the figures. If a target is not met, say why.
 - A target far beyond any D6 still gets a route and "cannot reach"; the failed
   charge moves along it and stops outside every zone.
 - Interposing replaces the target and re-routes.
-- Cache: hovering the same target twice searches once; a change of game state
+- Cache: selecting the same target twice searches once; hovering never searches; a change of game state
   (undo, another model moved) searches again.
 - All existing tests still pass.
 
@@ -73,7 +78,7 @@ Report the figures. If a target is not met, say why.
 
 - The test command in `CLAUDE.md` passes, with the output in your report.
 - In the running game (capture tooling, real mouse clicks): charge mode opening
-  with "can charge" labels; hovering a near, a far and an interposed target;
+  with "can charge" labels; selecting a near, a far and an interposed target;
   a declared charge succeeding and one failing.
 - The speed figures are in your report.
 - `core/` has no scene-tree access and no physics queries, the only random calls are
