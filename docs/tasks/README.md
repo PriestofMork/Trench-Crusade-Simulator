@@ -29,13 +29,10 @@ Open a new session in this folder and say:
 | `008-line-of-sight.md` | Done |
 | `008b-charge-corrections-and-down.md` | Done |
 | `008c-charge-planning-on-demand.md` | Done |
+| `008d-split-main.md` | Ready |
 
 ## Planned next (not yet written)
 
-- 008d: split `game/main.gd` (1600 lines) into one controller per interaction mode,
-  no behaviour change, before attacks add more modes; also adapt the older capture
-  tools (`capture_charge.gd`, `capture_sight.gd` step 9, `capture_charge_008b.gd`) to
-  click-to-route charges
 
 - 009: ranged and melee attacks, armour, Bloodbath, weapons as data
 - 010: import the TTS models and show them on their bases
